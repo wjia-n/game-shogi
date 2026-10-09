@@ -1,25 +1,65 @@
-import 'package:flutter/material.dart';
-import 'package:wajiha_game_core/wajiha_game_core.dart';
-import 'game_screen.dart';
+/// Shogi (将棋) — Japanese chess with a Japanese-craft art direction.
+library;
 
-void main() => runApp(const ShogiApp());
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import 'src/audio.dart';
+import 'src/save.dart';
+import 'src/screens/game.dart';
+import 'src/screens/menu.dart';
+import 'src/screens/settings_screen.dart';
+import 'src/theme.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+  await AudioService.I.init();
+  runApp(const ShogiApp());
+}
 
 class ShogiApp extends StatelessWidget {
   const ShogiApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return GameShell(
-      variant: ShellVariant.cozyPaper,
+    return MaterialApp(
       title: 'Shogi',
-      tagline: 'Japanese chess with sneaky piece drops! Outsmart the bot! 👑',
-      emoji: '👑',
-      slug: 'shogi',
-      howToPlay:
-          '• Fast 5×5 mini-shogi! Tap your piece, then tap a glowing square to move.\n• Captured pieces join YOUR hand — tap one, then tap any empty square to drop it back in!\n• No pawn drops on the last rank or in a file that already has your pawn.\n• Checkmate the enemy king (王) to win! Solo vs the bot or duel a friend!',
-      playerOptions: const [1, 2],
-      supportsBots: true,
-      gameBuilder: (ctx, players, cb) => ShogiScreen(players: players, callbacks: cb),
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        scaffoldBackgroundColor: ShogiPalette.tatami,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: ShogiPalette.kayaAmber,
+          primary: ShogiPalette.vermilion,
+        ),
+      ),
+      initialRoute: '/',
+      onGenerateRoute: (settings) {
+        switch (settings.name) {
+          case '/':
+            return MaterialPageRoute(
+                builder: (_) => const MenuScreen());
+          case '/settings':
+            return MaterialPageRoute(
+                builder: (_) => const SettingsScreen());
+          case '/game':
+            final args =
+                settings.arguments as Map<String, dynamic>? ?? {};
+            final config = args['config'] as GameConfig? ??
+                const GameConfig(mode: 'bot');
+            final cont = args['continue'] as bool? ?? false;
+            return MaterialPageRoute(
+                builder: (_) =>
+                    GameScreen(config: config, continueSaved: cont));
+          default:
+            return MaterialPageRoute(
+                builder: (_) => const MenuScreen());
+        }
+      },
     );
   }
 }
