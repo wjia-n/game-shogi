@@ -1,31 +1,387 @@
 /// Japanese craft design tokens — Stitch visual source of truth.
 /// See stitch-batch3/shogi/DESIGN.md
+///
+/// 12 selectable themes + a custom theme. [ShogiPalette] keeps its name and
+/// API but now resolves to the active theme at runtime, so every screen
+/// follows the chosen theme.
 library;
 
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 
-/// Palette from the Stitch "Japanese craft" design system.
-abstract class ShogiPalette {
-  static const tatami = Color(0xFFD9C9A8); // app background (woven straw)
-  static const tatamiDark = Color(0xFFC4B28E);
-  static const kayaAmber = Color(0xFFC89B5A); // board slab, button plaques
-  static const kayaDeep = Color(0xFFA87B3F); // board edge bevel, pressed state
-  static const kayaLight = Color(0xFFDDB271);
-  static const lacquer = Color(0xFF1A1817); // header strips, trays, primary plaques
-  static const lacquerSoft = Color(0xFF2B2622);
-  static const washi = Color(0xFFF5EEDC); // paper panels, cards, dialogs
-  static const washiShade = Color(0xFFE9DFC6);
-  static const ink = Color(0xFF24211D); // primary text on cream
-  static const vermilion = Color(0xFFC93A2B); // accents, selection, check
-  static const vermilionDeep = Color(0xFFA02A1F);
-  static const warmGray = Color(0xFF8A7F6E); // secondary text
-  static const emberGold = Color(0xFFE0A93E); // highlights, top-edge light
-  static const gridInk = Color(0xFF4A3826); // board grid lines
+import 'settings.dart';
+
+// ---------------------------------------------------------------------------
+// Theme data + catalog
+// ---------------------------------------------------------------------------
+
+/// Full color-token set for one theme.
+class ShogiThemeData {
+  final String id;
+  final String label;
+  final String kanji;
+  final Color tatami;
+  final Color tatamiDark;
+  final Color kayaAmber;
+  final Color kayaDeep;
+  final Color kayaLight;
+  final Color lacquer;
+  final Color lacquerSoft;
+  final Color washi;
+  final Color washiShade;
+  final Color ink;
+  final Color vermilion;
+  final Color vermilionDeep;
+  final Color warmGray;
+  final Color emberGold;
+  final Color gridInk;
+
+  const ShogiThemeData({
+    required this.id,
+    required this.label,
+    required this.kanji,
+    required this.tatami,
+    required this.tatamiDark,
+    required this.kayaAmber,
+    required this.kayaDeep,
+    required this.kayaLight,
+    required this.lacquer,
+    required this.lacquerSoft,
+    required this.washi,
+    required this.washiShade,
+    required this.ink,
+    required this.vermilion,
+    required this.vermilionDeep,
+    required this.warmGray,
+    required this.emberGold,
+    required this.gridInk,
+  });
 }
 
-/// Piece wood finishes (settings-selectable).
+const _lacquer = Color(0xFF1A1817);
+const _lacquerSoft = Color(0xFF2B2622);
+const _ink = Color(0xFF24211D);
+const _washi = Color(0xFFF5EEDC);
+const _washiShade = Color(0xFFE9DFC6);
+const _warmGray = Color(0xFF8A7F6E);
+
+/// 12 Japanese-craft themes. All avoid neon/cyberpunk per MASTER_RULES.md.
+const Map<String, ShogiThemeData> shogiThemes = {
+  'kaya-classic': ShogiThemeData(
+    id: 'kaya-classic',
+    label: 'Kaya Classic',
+    kanji: '欅',
+    tatami: Color(0xFFD9C9A8),
+    tatamiDark: Color(0xFFC4B28E),
+    kayaAmber: Color(0xFFC89B5A),
+    kayaDeep: Color(0xFFA87B3F),
+    kayaLight: Color(0xFFDDB271),
+    lacquer: _lacquer,
+    lacquerSoft: _lacquerSoft,
+    washi: _washi,
+    washiShade: _washiShade,
+    ink: _ink,
+    vermilion: Color(0xFFC93A2B),
+    vermilionDeep: Color(0xFFA02A1F),
+    warmGray: _warmGray,
+    emberGold: Color(0xFFE0A93E),
+    gridInk: Color(0xFF4A3826),
+  ),
+  'sakura-dawn': ShogiThemeData(
+    id: 'sakura-dawn',
+    label: 'Sakura Dawn',
+    kanji: '桜',
+    tatami: Color(0xFFE3CDBD),
+    tatamiDark: Color(0xFFCFB3A1),
+    kayaAmber: Color(0xFFD9A184),
+    kayaDeep: Color(0xFFB57E5C),
+    kayaLight: Color(0xFFEBC39F),
+    lacquer: Color(0xFF221A18),
+    lacquerSoft: Color(0xFF342825),
+    washi: Color(0xFFFBF3EC),
+    washiShade: Color(0xFFF0DFD2),
+    ink: Color(0xFF2E2320),
+    vermilion: Color(0xFFD14A6B),
+    vermilionDeep: Color(0xFFA83654),
+    warmGray: Color(0xFF9A8577),
+    emberGold: Color(0xFFE8B25E),
+    gridInk: Color(0xFF5A4034),
+  ),
+  'midnight-dojo': ShogiThemeData(
+    id: 'midnight-dojo',
+    label: 'Midnight Dojo',
+    kanji: '夜',
+    tatami: Color(0xFF3A3F4A),
+    tatamiDark: Color(0xFF2C313A),
+    kayaAmber: Color(0xFF9A7B4F),
+    kayaDeep: Color(0xFF6E5732),
+    kayaLight: Color(0xFFB89668),
+    lacquer: Color(0xFF121316),
+    lacquerSoft: Color(0xFF1E2126),
+    washi: Color(0xFFE8E2D2),
+    washiShade: Color(0xFFD2C9B2),
+    ink: Color(0xFF1E2024),
+    vermilion: Color(0xFFD64A35),
+    vermilionDeep: Color(0xFFA83624),
+    warmGray: Color(0xFF8E94A0),
+    emberGold: Color(0xFFE8B84E),
+    gridInk: Color(0xFFD8CFAE),
+  ),
+  'bamboo-grove': ShogiThemeData(
+    id: 'bamboo-grove',
+    label: 'Bamboo Grove',
+    kanji: '竹',
+    tatami: Color(0xFFCFC39A),
+    tatamiDark: Color(0xFFB3A87E),
+    kayaAmber: Color(0xFFC2A05C),
+    kayaDeep: Color(0xFF97803F),
+    kayaLight: Color(0xFFD9BC7E),
+    lacquer: Color(0xFF1C1A14),
+    lacquerSoft: Color(0xFF2E2A20),
+    washi: Color(0xFFF4EEDB),
+    washiShade: Color(0xFFE4D9BC),
+    ink: Color(0xFF26241A),
+    vermilion: Color(0xFFBE3A28),
+    vermilionDeep: Color(0xFF962C1E),
+    warmGray: Color(0xFF8A8468),
+    emberGold: Color(0xFFDDB04A),
+    gridInk: Color(0xFF4E4426),
+  ),
+  'momiji-autumn': ShogiThemeData(
+    id: 'momiji-autumn',
+    label: 'Momiji Autumn',
+    kanji: '紅葉',
+    tatami: Color(0xFFD9BE96),
+    tatamiDark: Color(0xFFC2A37C),
+    kayaAmber: Color(0xFFC98F4E),
+    kayaDeep: Color(0xFFA06834),
+    kayaLight: Color(0xFFDEAC72),
+    lacquer: Color(0xFF1E1613),
+    lacquerSoft: Color(0xFF322520),
+    washi: Color(0xFFF7EDDA),
+    washiShade: Color(0xFFE9D8BC),
+    ink: Color(0xFF2A2018),
+    vermilion: Color(0xFFC23E1E),
+    vermilionDeep: Color(0xFF9A2F16),
+    warmGray: Color(0xFF94805F),
+    emberGold: Color(0xFFE89E3E),
+    gridInk: Color(0xFF503722),
+  ),
+  'aizome-indigo': ShogiThemeData(
+    id: 'aizome-indigo',
+    label: 'Aizome Indigo',
+    kanji: '藍',
+    tatami: Color(0xFFB9B49A),
+    tatamiDark: Color(0xFF9E9A82),
+    kayaAmber: Color(0xFFB08D52),
+    kayaDeep: Color(0xFF82683A),
+    kayaLight: Color(0xFFCCAB72),
+    lacquer: Color(0xFF16181D),
+    lacquerSoft: Color(0xFF23262E),
+    washi: Color(0xFFEDEBD8),
+    washiShade: Color(0xFFDAD5BC),
+    ink: Color(0xFF1F2230),
+    vermilion: Color(0xFFC93A2B),
+    vermilionDeep: Color(0xFFA02A1F),
+    warmGray: Color(0xFF7E7F88),
+    emberGold: Color(0xFFD8A848),
+    gridInk: Color(0xFF2E3A5C),
+  ),
+  'matcha-garden': ShogiThemeData(
+    id: 'matcha-garden',
+    label: 'Matcha Garden',
+    kanji: '抹茶',
+    tatami: Color(0xFFC4C09A),
+    tatamiDark: Color(0xFFAAA67E),
+    kayaAmber: Color(0xFFB5985A),
+    kayaDeep: Color(0xFF8A7440),
+    kayaLight: Color(0xFFCFB678),
+    lacquer: Color(0xFF181A14),
+    lacquerSoft: Color(0xFF282B20),
+    washi: Color(0xFFF2EDDA),
+    washiShade: Color(0xFFE0D8BC),
+    ink: Color(0xFF23241A),
+    vermilion: Color(0xFFBE3A28),
+    vermilionDeep: Color(0xFF962C1E),
+    warmGray: Color(0xFF85836A),
+    emberGold: Color(0xFFD9A848),
+    gridInk: Color(0xFF44502E),
+  ),
+  'cedar-night': ShogiThemeData(
+    id: 'cedar-night',
+    label: 'Cedar Night',
+    kanji: '杉',
+    tatami: Color(0xFF4A3D30),
+    tatamiDark: Color(0xFF3A2F24),
+    kayaAmber: Color(0xFFA87B4A),
+    kayaDeep: Color(0xFF7C5730),
+    kayaLight: Color(0xFFC29468),
+    lacquer: Color(0xFF14100D),
+    lacquerSoft: Color(0xFF221B16),
+    washi: Color(0xFFEFE4CC),
+    washiShade: Color(0xFFD9C8A6),
+    ink: Color(0xFF241C14),
+    vermilion: Color(0xFFD0522E),
+    vermilionDeep: Color(0xFFA03E22),
+    warmGray: Color(0xFF9A8A76),
+    emberGold: Color(0xFFE8A848),
+    gridInk: Color(0xFFE2D2AC),
+  ),
+  'pearl-morning': ShogiThemeData(
+    id: 'pearl-morning',
+    label: 'Pearl Morning',
+    kanji: '朝',
+    tatami: Color(0xFFE6DCC4),
+    tatamiDark: Color(0xFFD2C6A8),
+    kayaAmber: Color(0xFFD9B878),
+    kayaDeep: Color(0xFFB89458),
+    kayaLight: Color(0xFFF0D49C),
+    lacquer: Color(0xFF2A2622),
+    lacquerSoft: Color(0xFF3E3830),
+    washi: Color(0xFFFFFBF0),
+    washiShade: Color(0xFFF2E8D4),
+    ink: Color(0xFF2E2A22),
+    vermilion: Color(0xFFC0392B),
+    vermilionDeep: Color(0xFF9A2C20),
+    warmGray: Color(0xFF9A8E78),
+    emberGold: Color(0xFFE8BC5E),
+    gridInk: Color(0xFF5A4A34),
+  ),
+  'sumi-night': ShogiThemeData(
+    id: 'sumi-night',
+    label: 'Sumi Night',
+    kanji: '墨',
+    tatami: Color(0xFF3C3A38),
+    tatamiDark: Color(0xFF2E2C2A),
+    kayaAmber: Color(0xFF9A8E7E),
+    kayaDeep: Color(0xFF6E6558),
+    kayaLight: Color(0xFFB8AC9C),
+    lacquer: Color(0xFF0E0E0E),
+    lacquerSoft: Color(0xFF1C1C1C),
+    washi: Color(0xFFEDEAE2),
+    washiShade: Color(0xFFD8D2C4),
+    ink: Color(0xFF1A1A1A),
+    vermilion: Color(0xFFB03324),
+    vermilionDeep: Color(0xFF8A281C),
+    warmGray: Color(0xFF8E8A84),
+    emberGold: Color(0xFFC8A848),
+    gridInk: Color(0xFFD8D2C4),
+  ),
+  'plum-blossom': ShogiThemeData(
+    id: 'plum-blossom',
+    label: 'Plum Blossom',
+    kanji: '梅',
+    tatami: Color(0xFFD8C4B8),
+    tatamiDark: Color(0xFFC0A898),
+    kayaAmber: Color(0xFFC99A7E),
+    kayaDeep: Color(0xFFA07458),
+    kayaLight: Color(0xFFDEB898),
+    lacquer: Color(0xFF1E181C),
+    lacquerSoft: Color(0xFF32262E),
+    washi: Color(0xFFFAF1EA),
+    washiShade: Color(0xFFEDD9CC),
+    ink: Color(0xFF2C2228),
+    vermilion: Color(0xFFB03A5E),
+    vermilionDeep: Color(0xFF8A2C48),
+    warmGray: Color(0xFF96827E),
+    emberGold: Color(0xFFE0A86E),
+    gridInk: Color(0xFF54383E),
+  ),
+  'golden-hour': ShogiThemeData(
+    id: 'golden-hour',
+    label: 'Golden Hour',
+    kanji: '夕',
+    tatami: Color(0xFFE0C491),
+    tatamiDark: Color(0xFFCBAE78),
+    kayaAmber: Color(0xFFD8A24E),
+    kayaDeep: Color(0xFFB37C32),
+    kayaLight: Color(0xFFF0C078),
+    lacquer: Color(0xFF201812),
+    lacquerSoft: Color(0xFF36281C),
+    washi: Color(0xFFFBF2DC),
+    washiShade: Color(0xFFF2E2C0),
+    ink: Color(0xFF2E2416),
+    vermilion: Color(0xFFC8481E),
+    vermilionDeep: Color(0xFFA03816),
+    warmGray: Color(0xFF9A8560),
+    emberGold: Color(0xFFF0B83E),
+    gridInk: Color(0xFF5A4426),
+  ),
+};
+
+/// Builds the user-customized theme from [SettingsService] custom colors.
+ShogiThemeData customThemeData(SettingsService s) {
+  final bg = Color(s.customBg);
+  final bgDark = Color.lerp(bg, const Color(0xFF000000), 0.12) ?? bg;
+  final board = Color(s.customBoard);
+  final edge = Color(s.customBoardEdge);
+  final accent = Color(s.customAccent);
+  final paper = Color(s.customPaper);
+  final paperShade = Color.lerp(paper, const Color(0xFF000000), 0.07) ?? paper;
+  return ShogiThemeData(
+    id: 'custom',
+    label: 'My Theme',
+    kanji: '自',
+    tatami: bg,
+    tatamiDark: bgDark,
+    kayaAmber: board,
+    kayaDeep: edge,
+    kayaLight: Color.lerp(board, const Color(0xFFFFFFFF), 0.18) ?? board,
+    lacquer: _lacquer,
+    lacquerSoft: _lacquerSoft,
+    washi: paper,
+    washiShade: paperShade,
+    ink: _ink,
+    vermilion: accent,
+    vermilionDeep: Color.lerp(accent, const Color(0xFF000000), 0.2) ?? accent,
+    warmGray: _warmGray,
+    emberGold: Color.lerp(accent, const Color(0xFFFFD98A), 0.45) ?? accent,
+    gridInk: const Color(0xFF4A3826),
+  );
+}
+
+/// Active theme: the selected catalog theme, or the user's custom theme.
+abstract class ShogiThemes {
+  static ShogiThemeData get active {
+    final s = SettingsService.I;
+    if (s.themeId == 'custom') return customThemeData(s);
+    return shogiThemes[s.themeId] ?? shogiThemes['kaya-classic']!;
+  }
+
+  static List<ShogiThemeData> get all => shogiThemes.values.toList();
+}
+
+// ---------------------------------------------------------------------------
+// Palette facade — same API as before, now theme-aware.
+// ---------------------------------------------------------------------------
+
+/// Palette from the Stitch "Japanese craft" design system, resolved against
+/// the active theme.
+abstract class ShogiPalette {
+  static ShogiThemeData get _t => ShogiThemes.active;
+  static Color get tatami => _t.tatami;
+  static Color get tatamiDark => _t.tatamiDark;
+  static Color get kayaAmber => _t.kayaAmber;
+  static Color get kayaDeep => _t.kayaDeep;
+  static Color get kayaLight => _t.kayaLight;
+  static Color get lacquer => _t.lacquer;
+  static Color get lacquerSoft => _t.lacquerSoft;
+  static Color get washi => _t.washi;
+  static Color get washiShade => _t.washiShade;
+  static Color get ink => _t.ink;
+  static Color get vermilion => _t.vermilion;
+  static Color get vermilionDeep => _t.vermilionDeep;
+  static Color get warmGray => _t.warmGray;
+  static Color get emberGold => _t.emberGold;
+  static Color get gridInk => _t.gridInk;
+}
+
+// ---------------------------------------------------------------------------
+// Piece + board materials
+// ---------------------------------------------------------------------------
+
+/// Piece finishes (settings-selectable). 9 styles.
 class PieceWood {
   final Color base;
   final Color hi;
@@ -48,21 +404,69 @@ const Map<String, PieceWood> pieceWoods = {
     Color(0xFF7A4E28), Color(0xFFA9763F), Color(0xFF4E2F16),
     Color(0xFF8F5F33), Color(0xFFF5EEDC),
   ),
+  'tsuge': PieceWood(
+    Color(0xFFF2DFB8), Color(0xFFFFF2D4), Color(0xFFC8A468),
+    Color(0xFFE2C48E), Color(0xFF2A2115),
+  ),
+  'walnut': PieceWood(
+    Color(0xFF9A6B3D), Color(0xFFC08D55), Color(0xFF5E3E20),
+    Color(0xFF8A5E34), Color(0xFFF5EEDC),
+  ),
+  'sakura': PieceWood(
+    Color(0xFFD9A184), Color(0xFFF2C4A4), Color(0xFFA06844),
+    Color(0xFFC78F6E), Color(0xFF2E1F16),
+  ),
+  'kuro': PieceWood(
+    Color(0xFF2E2724), Color(0xFF4E443E), Color(0xFF121010),
+    Color(0xFF3E3632), Color(0xFFE8C86E),
+  ),
+  'shu': PieceWood(
+    Color(0xFFB03324), Color(0xFFD4553E), Color(0xFF7C2115),
+    Color(0xFFA02A1C), Color(0xFFF8ECD8),
+  ),
+  'bamboo': PieceWood(
+    Color(0xFFE4D29A), Color(0xFFF8EAB8), Color(0xFFB89B5E),
+    Color(0xFFD4BE7E), Color(0xFF2A2415),
+  ),
 };
 
-/// Board wood choices (settings-selectable).
+/// Board woods (settings-selectable). 6 woods.
 class BoardWood {
   final Color face;
   final Color edge;
   final Color grid;
   const BoardWood(this.face, this.edge, this.grid);
+
+  BoardWood withGrid(Color grid) => BoardWood(face, edge, grid);
 }
 
 const Map<String, BoardWood> boardWoods = {
   'kaya': BoardWood(Color(0xFFD9AE62), Color(0xFFA87B3F), Color(0xFF4A3826)),
-  'katsura': BoardWood(Color(0xFFE4C184), Color(0xFFB28C4E), Color(0xFF5A4630)),
+  'katsura':
+      BoardWood(Color(0xFFE4C184), Color(0xFFB28C4E), Color(0xFF5A4630)),
   'walnut': BoardWood(Color(0xFF9A6B3D), Color(0xFF6E4525), Color(0xFF2E1F12)),
+  'sakura': BoardWood(Color(0xFFC98F5F), Color(0xFF9A5F36), Color(0xFF3A2414)),
+  'ebony': BoardWood(Color(0xFF4A3428), Color(0xFF2A1D14), Color(0xFFE9DFC6)),
+  'bamboo': BoardWood(Color(0xFFE8D49A), Color(0xFFB89B5E), Color(0xFF5A4A2A)),
 };
+
+/// Board accent (grid ink) colors.
+const Map<String, Color> boardAccents = {
+  'ink': Color(0xFF4A3826),
+  'vermilion': Color(0xFFC93A2B),
+  'gold': Color(0xFFE0A93E),
+  'pale': Color(0xFFE9DFC6),
+};
+
+/// Resolves the effective board wood: chosen wood + chosen accent grid.
+BoardWood resolveBoardWood(SettingsService s) {
+  final wood = boardWoods[s.boardWood] ?? boardWoods['kaya']!;
+  return wood.withGrid(boardAccents[s.boardAccent] ?? wood.grid);
+}
+
+// ---------------------------------------------------------------------------
+// Typography + shared materials (unchanged API)
+// ---------------------------------------------------------------------------
 
 /// Typography: brush-stroke kanji display + warm serif for English.
 abstract class ShogiType {
@@ -99,19 +503,19 @@ abstract class ShogiType {
         height: 1.5,
       );
 
-  static const TextStyle stat = TextStyle(
-    fontFamily: serif,
-    fontSize: 16,
-    fontWeight: FontWeight.w700,
-    color: ShogiPalette.ink,
-    fontFeatures: [FontFeature.tabularFigures()],
-  );
+  static TextStyle get stat => TextStyle(
+        fontFamily: serif,
+        fontSize: 16,
+        fontWeight: FontWeight.w700,
+        color: ShogiPalette.ink,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      );
 
-  static const TextStyle caption = TextStyle(
-    fontSize: 12,
-    color: ShogiPalette.warmGray,
-    height: 1.4,
-  );
+  static TextStyle get caption => TextStyle(
+        fontSize: 12,
+        color: ShogiPalette.warmGray,
+        height: 1.4,
+      );
 }
 
 /// Shared material decorations: lacquered plaques, washi panels, wood buttons.
@@ -230,8 +634,7 @@ class WoodSlabPainter extends CustomPainter {
     final rrect = RRect.fromRectAndRadius(
         Offset.zero & size, const Radius.circular(10));
     // Edge bevel.
-    canvas.drawRRect(
-        rrect, Paint()..color = edge);
+    canvas.drawRRect(rrect, Paint()..color = edge);
     final inner = RRect.fromRectAndRadius(
         Rect.fromLTWH(7, 7, size.width - 14, size.height - 14),
         const Radius.circular(6));
@@ -255,7 +658,7 @@ class WoodSlabPainter extends CustomPainter {
     final light = Paint()
       ..shader = const LinearGradient(
         begin: Alignment.topCenter,
-        end: Alignment.center,
+        end: Alignment.bottomCenter,
         colors: [Color(0x55FFE9B8), Colors.transparent],
       ).createShader(Offset.zero & size);
     canvas.drawRRect(inner, light);
@@ -393,7 +796,7 @@ class DiscButton extends StatelessWidget {
         height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: const LinearGradient(
+          gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [ShogiPalette.lacquerSoft, ShogiPalette.lacquer],
@@ -436,8 +839,7 @@ class WoodToggle extends StatelessWidget {
             AnimatedAlign(
               duration: const Duration(milliseconds: 160),
               curve: Curves.easeOut,
-              alignment:
-                  value ? Alignment.centerRight : Alignment.centerLeft,
+              alignment: value ? Alignment.centerRight : Alignment.centerLeft,
               child: Container(
                 width: 28,
                 height: 28,

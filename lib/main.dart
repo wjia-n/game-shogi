@@ -4,11 +4,13 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'src/audio.dart';
-import 'src/save.dart';
+import 'src/screens/custom_theme_screen.dart';
 import 'src/screens/game.dart';
 import 'src/screens/menu.dart';
+import 'src/screens/pro_screen.dart';
 import 'src/screens/settings_screen.dart';
+import 'src/screens/splash_screen.dart';
+import 'src/save.dart';
 import 'src/theme.dart';
 
 Future<void> main() async {
@@ -17,7 +19,6 @@ Future<void> main() async {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
-  await AudioService.I.init();
   runApp(const ShogiApp());
 }
 
@@ -37,15 +38,24 @@ class ShogiApp extends StatelessWidget {
           primary: ShogiPalette.vermilion,
         ),
       ),
-      initialRoute: '/',
+      initialRoute: '/splash',
       onGenerateRoute: (settings) {
         switch (settings.name) {
+          case '/splash':
+            return MaterialPageRoute(
+                builder: (_) => const SplashScreen());
           case '/':
             return MaterialPageRoute(
                 builder: (_) => const MenuScreen());
           case '/settings':
             return MaterialPageRoute(
                 builder: (_) => const SettingsScreen());
+          case '/pro':
+            return MaterialPageRoute(
+                builder: (_) => const ProScreen());
+          case '/custom-theme':
+            return MaterialPageRoute(
+                builder: (_) => const CustomThemeScreen());
           case '/game':
             final args =
                 settings.arguments as Map<String, dynamic>? ?? {};

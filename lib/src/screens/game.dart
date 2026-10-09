@@ -1,13 +1,16 @@
-/// Board screen: 9x9 shogi on kaya wood, komadai trays, dialogs.
+/// Board screen: 9x9 shogi on kaya wood, per-side komadai trays,
+/// visible bot turns with narration, impasse flow, dialogs.
+///
+/// All turn state lives in [GameController]; this screen only renders
+/// and forwards input.
 library;
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../ai.dart';
 import '../audio.dart';
+import '../controller.dart';
 import '../engine.dart';
 import '../save.dart';
 import '../settings.dart';
@@ -26,72 +29,76 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen>
     with WidgetsBindingObserver, TickerProviderStateMixin {
-  final ShogiEngine _engine = ShogiEngine();
-  late GameConfig _config;
+  late GameController _ctl;
 
   // Selection.
   int? _sel;
   int? _selHandType;
   Map<int, List<ShogiMove>> _targets = {};
 
-  // Board chrome.
-  int? _lastFrom;
-  int? _lastTo;
-  int? _checkSq;
-  List<ShogiMove> _legalForTurn = [];
-
   // Animation.
   late final AnimationController _animCtrl;
-  ShogiMove? _animMove;
-  int _animPiece = 0;
   late final AnimationController _shakeCtrl;
   int? _shakeSq;
+  int _lastFx = -1;
 
-  // Flow.
-  bool _thinking = false;
-  bool _over = false;
-  bool _reviewing = false; // game-over card dismissed, board read-only
-  int? _winner; // sente/gote/null
-  String _endReason = '';
-  String _endTitle = '';
-  int _invalidStreak = 0;
-  int _elapsed = 0;
-  Timer? _clock;
-  int _lastBotScore = 0;
-  int _botGen = 0; // guards stale bot results
+  // Dialog guards.
+  bool _promoShown = false;
+  bool _impasseShown = false;
 
   SettingsService get _s => SettingsService.I;
   PieceWood get _wood => pieceWoods[_s.pieceStyle] ?? pieceWoods['kaya']!;
-  BoardWood get _boardWood =>
-      boardWoods[_s.boardWood] ?? boardWoods['kaya']!;
-
-  bool get _isBotMode => _config.mode == 'bot';
-  int get _humanColor => _config.humanColor;
-  bool _isHumanTurn() =>
-      !_isBotMode || _engine.turn == _humanColor;
+  BoardWood get _boardWood => resolveBoardWood(_s);
 
   @override
   void initState() {
     super.initState();
-    _config = widget.config;
+    _ctl = GameController(widget.config);
     WidgetsBinding.instance.addObserver(this);
     _animCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 230));
+        vsync: this, duration: const Duration(milliseconds: 260));
     _animCtrl.addListener(() => setState(() {}));
     _shakeCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 380));
     _shakeCtrl.addListener(() => setState(() {}));
+    _ctl.addListener(_onCtl);
     if (widget.continueSaved) {
-      _restore();
+      _ctl.restore();
     } else {
-      _newGame();
+      _ctl.start();
     }
+  }
+
+  void _onCtl() {
+    if (!mounted) return;
+    // Replay the move animation whenever the controller publishes one.
+    if (_ctl.fxTick != _lastFx) {
+      _lastFx = _ctl.fxTick;
+      _animCtrl.forward(from: 0);
+      _clearSelection();
+    }
+    // Promotion dialog.
+    if (_ctl.phase == GamePhase.promoAsk && !_promoShown) {
+      _promoShown = true;
+      _askPromotion();
+    } else if (_ctl.phase != GamePhase.promoAsk) {
+      _promoShown = false;
+    }
+    // Impasse dialog.
+    if (_ctl.impasseOffer != null && !_impasseShown) {
+      _impasseShown = true;
+      _showImpasse();
+    } else if (_ctl.impasseOffer == null) {
+      _impasseShown = false;
+    }
+    setState(() {});
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _clock?.cancel();
+    _ctl.removeListener(_onCtl);
+    _ctl.dispose();
     _animCtrl.dispose();
     _shakeCtrl.dispose();
     super.dispose();
@@ -101,80 +108,10 @@ class _GameScreenState extends State<GameScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
-      unawaited(_persist());
-      unawaited(AudioService.I.stopMusic());
+      _ctl.setAppPaused(true);
     } else if (state == AppLifecycleState.resumed) {
-      if (!_over) AudioService.I.gameMusic();
+      _ctl.setAppPaused(false);
     }
-  }
-
-  // ------------------------------------------------------------ setup/flow
-
-  void _newGame() {
-    _engine.setup(handicap: _config.handicap);
-    _lastFrom = null;
-    _lastTo = null;
-    _checkSq = null;
-    _over = false;
-    _reviewing = false;
-    _winner = null;
-    _elapsed = 0;
-    _invalidStreak = 0;
-    _clearSelection();
-    _refreshTurn();
-    unawaited(GameSave.clear());
-    unawaited(AudioService.I.gameStart());
-    unawaited(AudioService.I.gameMusic());
-    _startClock();
-    _maybeBot();
-    setState(() {});
-  }
-
-  Future<void> _restore() async {
-    final data = await GameSave.load();
-    if (data == null) {
-      _newGame();
-      return;
-    }
-    _config = GameConfig.fromJson(
-        Map<String, dynamic>.from(data['config'] as Map));
-    _engine.fromMap(Map<String, dynamic>.from(data['engine'] as Map));
-    _lastFrom = data['lastFrom'] as int?;
-    _lastTo = data['lastTo'] as int?;
-    _elapsed = data['elapsed'] as int? ?? 0;
-    _over = false;
-    _reviewing = false;
-    _clearSelection();
-    _refreshTurn();
-    unawaited(AudioService.I.gameMusic());
-    _startClock();
-    _maybeBot();
-    setState(() {});
-  }
-
-  void _startClock() {
-    _clock?.cancel();
-    _clock = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!_over && mounted) setState(() => _elapsed++);
-    });
-  }
-
-  void _refreshTurn() {
-    _legalForTurn = _engine.legalMoves(_engine.turn);
-    _checkSq = _engine.inCheck(_engine.turn)
-        ? _engine.kingSquare(_engine.turn)
-        : null;
-  }
-
-  Future<void> _persist() async {
-    if (_over) return;
-    await GameSave.store({
-      'config': _config.toJson(),
-      'engine': _engine.toMap(),
-      'lastFrom': _lastFrom,
-      'lastTo': _lastTo,
-      'elapsed': _elapsed,
-    });
   }
 
   // ------------------------------------------------------------------ input
@@ -185,21 +122,27 @@ class _GameScreenState extends State<GameScreen>
     _targets = {};
   }
 
+  bool get _inputOpen =>
+      !_ctl.over &&
+      !_ctl.reviewing &&
+      _ctl.isHumanTurn &&
+      _ctl.phase == GamePhase.idle;
+
   void _onTapSquare(int sq) {
-    if (_over || _reviewing || _thinking) return;
-    if (!_isHumanTurn()) return;
+    if (!_inputOpen) return;
     final moves = _targets[sq];
     if (moves != null && moves.isNotEmpty) {
       if (moves.length == 2) {
-        _askPromotion(moves);
+        _ctl.askPromotion(moves);
       } else {
-        _playHumanMove(moves.first);
+        _ctl.humanMove(moves.first);
       }
       return;
     }
-    final p = _engine.board[sq];
-    if (p != 0 && pColor(p) == _engine.turn) {
-      final mine = _legalForTurn.where((m) => m.from == sq).toList();
+    final p = _ctl.engine.board[sq];
+    if (p != 0 && pColor(p) == _ctl.engine.turn) {
+      final mine =
+          _ctl.legalForTurn.where((m) => m.from == sq).toList();
       if (mine.isEmpty) {
         _invalid(sq);
         return;
@@ -211,7 +154,6 @@ class _GameScreenState extends State<GameScreen>
         _targets.putIfAbsent(m.to, () => []).add(m);
       }
       AudioService.I.select();
-      _invalidStreak = 0;
       setState(() {});
     } else {
       if (_sel != null || _selHandType != null) {
@@ -222,10 +164,10 @@ class _GameScreenState extends State<GameScreen>
   }
 
   void _onTapHand(int type) {
-    if (_over || _reviewing || _thinking) return;
-    if (!_isHumanTurn()) return;
-    final drops =
-        _legalForTurn.where((m) => m.isDrop && m.dropType == type).toList();
+    if (!_inputOpen) return;
+    final drops = _ctl.legalForTurn
+        .where((m) => m.isDrop && m.dropType == type)
+        .toList();
     if (drops.isEmpty) {
       _invalid(-1);
       return;
@@ -234,213 +176,68 @@ class _GameScreenState extends State<GameScreen>
     _selHandType = type;
     _targets = {for (final m in drops) m.to: [m]};
     AudioService.I.select();
-    _invalidStreak = 0;
     setState(() {});
   }
 
   void _invalid(int sq) {
-    _invalidStreak++;
-    AudioService.I.invalid();
     if (sq >= 0) {
       _shakeSq = sq;
       _shakeCtrl.forward(from: 0);
     }
-    if (_invalidStreak >= 3) {
-      _invalidStreak = 0;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('その手は指せません — check how this piece moves',
-              style: TextStyle(color: ShogiPalette.washi)),
-          backgroundColor: ShogiPalette.lacquer,
-          duration: Duration(seconds: 2),
-        ));
-      }
-    }
-    setState(() {});
+    _ctl.invalidTap();
   }
 
-  Future<void> _askPromotion(List<ShogiMove> options) async {
-    final promoteFirst = options.firstWhere((m) => m.promote);
-    final keepFirst = options.firstWhere((m) => !m.promote);
-    final piece = _engine.board[promoteFirst.from];
+  Future<void> _askPromotion() async {
+    final options = _ctl.promoOptions;
+    if (options.isEmpty) {
+      _ctl.resolvePromotion(false);
+      return;
+    }
+    final piece = _ctl.engine.board[options.first.from];
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: true,
       builder: (ctx) => _PromotionDialog(piece: piece, wood: _wood),
     );
     if (!mounted) return;
-    // Dismissed dialog counts as decline (unless mandatory — but mandatory
-    // never reaches the dialog).
-    _playHumanMove(result == true ? promoteFirst : keepFirst);
+    _ctl.resolvePromotion(result);
   }
 
-  void _playHumanMove(ShogiMove m) {
-    if (m.promote) {
-      AudioService.I.promote();
-    }
-    _commitMove(m);
-  }
-
-  // ------------------------------------------------------------------ moves
-
-  void _commitMove(ShogiMove m) {
-    final pieceBefore = m.isDrop ? _engine.turn * m.dropType : _engine.board[m.from];
-    final wasCapture = !m.isDrop && _engine.board[m.to] != 0;
-    _engine.applyMove(m);
-    _lastFrom = m.from >= 0 ? m.from : null;
-    _lastTo = m.to;
-    _clearSelection();
-    _invalidStreak = 0;
-    _engine.recordPosition();
-
-    // Animation.
-    _animMove = m;
-    _animPiece = pieceBefore;
-    _animCtrl.forward(from: 0);
-
-    // Sounds.
-    if (wasCapture) {
-      AudioService.I.capture();
-    } else if (m.isDrop) {
-      AudioService.I.drop();
-    } else if (!m.promote) {
-      AudioService.I.move();
-    }
-
-    _refreshTurn();
-    unawaited(_persist());
-
-    // End-of-game checks.
-    final rep = _engine.sennichiteResult();
-    if (rep != 0) {
-      if (rep == 1) {
-        _finish(null, '千日手', 'Repetition draw — sennichite');
-      } else {
-        final loser = rep == 2 ? sente : gote;
-        _finish(-loser, '詰み',
-            'Perpetual check — ${_name(-loser)} wins');
-      }
-      setState(() {});
-      return;
-    }
-    if (_engine.isCheckmate(_engine.turn)) {
-      final winner = -_engine.turn;
-      _finish(winner, '詰み', 'Checkmate — ${_name(winner)} wins');
-      setState(() {});
-      return;
-    }
-    if (_engine.inCheck(_engine.turn)) {
-      AudioService.I.check();
-    }
-    setState(() {});
-    _maybeBot();
-  }
-
-  void _maybeBot() {
-    if (_over || !_isBotMode) return;
-    if (_engine.turn == _humanColor) return;
-    _thinking = true;
-    _botGen++;
-    final gen = _botGen;
-    setState(() {});
-    final payload = {
-      'board': List<int>.of(_engine.board),
-      'hs': List<int>.of(_engine.handSente),
-      'hg': List<int>.of(_engine.handGote),
-      'turn': _engine.turn,
-      'ply': _engine.ply,
-      'repKeys': List<String>.of(_engine.repKeys),
-      'difficulty': _config.difficulty,
-      'seed': DateTime.now().millisecondsSinceEpoch & 0x7fffffff,
-    };
-    compute(aiCompute, payload).then((encoded) {
-      if (!mounted || _over || gen != _botGen) return;
-      _thinking = false;
-      final parts = encoded.split('|');
-      _lastBotScore = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
-      final move = ShogiMove.decode(parts[0]);
-      // Sanity: the AI must only play legal moves.
-      final ok = _engine
-          .legalMoves(_engine.turn)
-          .any((m) =>
-              m.from == move.from &&
-              m.to == move.to &&
-              m.dropType == move.dropType &&
-              m.promote == move.promote);
-      if (!ok) {
-        // Fallback: first legal move (should never happen).
-        final legal = _engine.legalMoves(_engine.turn);
-        if (legal.isEmpty) return;
-        _commitMove(legal.first);
-        return;
-      }
-      if (move.promote) AudioService.I.promote();
-      _commitMove(move);
-    });
-  }
-
-  void _finish(int? winner, String title, String reason) {
-    _over = true;
-    _winner = winner;
-    _endTitle = title;
-    _endReason = reason;
-    _clock?.cancel();
-    _thinking = false;
-    _botGen++; // invalidate any in-flight bot search
-    unawaited(GameSave.clear());
-    if (winner == null) {
-      AudioService.I.draw();
-    } else if (!_isBotMode || winner == _humanColor) {
-      AudioService.I.win();
+  Future<void> _showImpasse() async {
+    final offer = _ctl.impasseOffer;
+    if (offer == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => _ImpasseDialog(
+        declarerName: _ctl.nameOf(offer['declarer'] as int),
+        senteName: _ctl.nameOf(sente),
+        goteName: _ctl.nameOf(gote),
+        sentePoints: offer['sentePoints'] as int,
+        gotePoints: offer['gotePoints'] as int,
+        verdict: offer['verdict'] as String,
+      ),
+    );
+    if (!mounted) return;
+    if (ok == true) {
+      _ctl.confirmImpasse();
     } else {
-      AudioService.I.lose();
+      _ctl.clearImpasseOffer();
     }
   }
-
-  String _name(int color) =>
-      color == sente ? _config.senteName : _config.goteName;
 
   // ---------------------------------------------------------------- actions
 
-  void _undo() {
-    if (_over || _thinking || _engine.history.isEmpty) return;
-    if (!_s.allowUndo) return;
-    final before = _engine.ply;
-    if (_isBotMode) {
-      // Undo a full round: the bot's reply (if any), then the human's move.
-      _popPly();
-      if (_engine.history.isNotEmpty && _engine.turn != _humanColor) {
-        _popPly();
-      }
-    } else {
-      _popPly();
-    }
-    if (_engine.ply == before) return; // nothing undone
-    _lastFrom = null;
-    _lastTo = null;
-    _clearSelection();
-    _refreshTurn();
-    unawaited(_persist());
-    setState(() {});
-  }
-
-  void _popPly() {
-    final u = _engine.history.removeLast();
-    _engine.undoMove(u);
-    _engine.truncateRepetition(_engine.repKeys.length - 1);
-  }
-
   Future<void> _resign() async {
-    if (_over || _thinking) return;
-    final me = _engine.turn;
-    if (!_isHumanTurn()) return;
+    if (_ctl.over || !_ctl.isHumanTurn) return;
     var ok = true;
     if (_s.confirmResign) {
       ok = await showDialog<bool>(
             context: context,
             builder: (ctx) => _ConfirmDialog(
               title: '投了 Resign?',
-              body: 'Resign this game? ${_name(-me)} wins.',
+              body:
+                  'Resign this game? ${_ctl.nameOf(-_ctl.engine.turn)} wins.',
               confirmKanji: '投了',
               confirmLabel: 'Resign',
             ),
@@ -448,64 +245,57 @@ class _GameScreenState extends State<GameScreen>
           false;
     }
     if (!ok || !mounted) return;
-    AudioService.I.lose();
-    _finish(-me, '投了', 'Resignation — ${_name(-me)} wins');
-    setState(() {});
+    AudioService.I.click();
+    _ctl.resign();
   }
 
   Future<void> _offerDraw() async {
-    if (_over || _thinking) return;
-    if (!_isHumanTurn()) return;
-    final me = _engine.turn;
-    if (_isBotMode) {
-      // Bot accepts only when clearly losing.
-      if (_lastBotScore < -400) {
-        _finish(null, '和', 'Draw agreed — the bot accepts');
-      } else {
-        AudioService.I.click();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Bot declines the draw — the fight continues!',
-                style: TextStyle(color: ShogiPalette.washi)),
-            backgroundColor: ShogiPalette.lacquer,
-            duration: Duration(seconds: 2),
-          ));
-        }
-      }
-      setState(() {});
+    if (_ctl.over || !_ctl.isHumanTurn) return;
+    final res = _ctl.offerDraw();
+    if (res == null) return;
+    if (res == 'DIALOG') {
+      final me = _ctl.engine.turn;
+      final offer = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => _ConfirmDialog(
+              title: '千日手 Draw offer',
+              body:
+                  '${_ctl.nameOf(me)} offers a draw. Show this to ${_ctl.nameOf(-me)}.',
+              confirmKanji: '申',
+              confirmLabel: 'Offer draw',
+            ),
+          ) ??
+          false;
+      if (!offer || !mounted) return;
+      final accept = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => _ConfirmDialog(
+              title: '和 Draw?',
+              body:
+                  '${_ctl.nameOf(me)} offers a draw. ${_ctl.nameOf(-me)}, accept?',
+              confirmKanji: '和',
+              confirmLabel: 'Accept draw',
+            ),
+          ) ??
+          false;
+      if (accept) _ctl.acceptDraw();
       return;
     }
-    final offer = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => _ConfirmDialog(
-            title: '千日手 Draw offer',
-            body: '${_name(me)} offers a draw. Show this to ${_name(-me)}.',
-            confirmKanji: '申',
-            confirmLabel: 'Offer draw',
-          ),
-        ) ??
-        false;
-    if (!offer || !mounted) return;
-    final accept = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => _ConfirmDialog(
-            title: '和 Draw?',
-            body: '${_name(me)} offers a draw. ${_name(-me)}, accept?',
-            confirmKanji: '和',
-            confirmLabel: 'Accept draw',
-          ),
-        ) ??
-        false;
-    if (accept) {
-      _finish(null, '和', 'Draw by mutual agreement');
-      setState(() {});
+    // Bot declined message.
+    AudioService.I.click();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(res, style: const TextStyle(color: Colors.white)),
+        backgroundColor: ShogiPalette.lacquer,
+        duration: const Duration(seconds: 2),
+      ));
     }
   }
 
   Future<void> _pauseMenu() async {
-    if (_over) return;
+    if (_ctl.over) return;
     AudioService.I.click();
-    unawaited(_persist());
+    unawaited(_ctl.persist());
     final action = await showDialog<String>(
       context: context,
       builder: (ctx) => const _PauseDialog(),
@@ -525,13 +315,21 @@ class _GameScreenState extends State<GameScreen>
               ),
             ) ??
             false;
-        if (ok) _newGame();
+        if (ok) {
+          AudioService.I.click();
+          _ctl.newGame();
+        }
       case 'settings':
         await Navigator.of(context).pushNamed('/settings');
         setState(() {}); // visuals may have changed
-        unawaited(AudioService.I.refresh());
+        AudioService.I.configure(
+          musicOn: _s.musicOn,
+          sfxOn: _s.sfxOn,
+          volume: _s.volume,
+          musicVolume: _s.musicVolume,
+        );
       case 'menu':
-        unawaited(_persist());
+        unawaited(_ctl.persist());
         unawaited(AudioService.I.menuMusic());
         Navigator.of(context).pop();
     }
@@ -539,48 +337,38 @@ class _GameScreenState extends State<GameScreen>
 
   // ------------------------------------------------------------------ build
 
-  String _clockText() {
-    final m = _elapsed ~/ 60;
-    final s = _elapsed % 60;
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          // Tatami backdrop.
-          Positioned.fill(
-            child: CustomPaint(painter: TatamiPainter()),
-          ),
+          Positioned.fill(child: CustomPaint(painter: TatamiPainter())),
           SafeArea(
             child: Column(
               children: [
                 _topBar(),
-                const SizedBox(height: 6),
-                // Gote komadai.
+                _narrationBar(),
+                const SizedBox(height: 4),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: Komadai(
-                    hand: _engine.handGote,
+                    name: _ctl.config.goteName,
+                    hand: _ctl.engine.handGote,
                     color: gote,
                     wood: _wood,
-                    interactive:
-                        _isHumanTurn() && _engine.turn == gote && !_over,
+                    interactive: _inputOpen && _ctl.engine.turn == gote,
                     selectedType:
-                        _engine.turn == gote ? _selHandType : null,
+                        _ctl.engine.turn == gote ? _selHandType : null,
                     onTapType: _onTapHand,
                   ),
                 ),
                 const SizedBox(height: 6),
-                // Board.
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 10),
                     child: ShogiBoard(
                       view: BoardView(
-                        board: _engine.board,
+                        board: _ctl.engine.board,
                         wood: _wood,
                         boardWood: _boardWood,
                         selected: _sel,
@@ -589,17 +377,17 @@ class _GameScreenState extends State<GameScreen>
                             : const {},
                         captureTargets: _targets.entries
                             .where((e) =>
-                                _engine.board[e.key] != 0 &&
-                                pColor(_engine.board[e.key]) !=
-                                    _engine.turn)
+                                _ctl.engine.board[e.key] != 0 &&
+                                pColor(_ctl.engine.board[e.key]) !=
+                                    _ctl.engine.turn)
                             .map((e) => e.key)
                             .toSet(),
-                        lastFrom: _lastFrom,
-                        lastTo: _lastTo,
-                        checkSquare: _checkSq,
+                        lastFrom: _ctl.lastFrom,
+                        lastTo: _ctl.lastTo,
+                        checkSquare: _ctl.checkSq,
                         showCoords: _s.showCoordinates,
-                        animMove: _animMove,
-                        animPiece: _animPiece,
+                        animMove: _ctl.animMove,
+                        animPiece: _ctl.animPiece,
                         animT: _animCtrl.value,
                         shakeSquare: _shakeSq,
                         shakeT: _shakeCtrl.value,
@@ -609,17 +397,16 @@ class _GameScreenState extends State<GameScreen>
                   ),
                 ),
                 const SizedBox(height: 6),
-                // Sente komadai.
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: Komadai(
-                    hand: _engine.handSente,
+                    name: _ctl.config.senteName,
+                    hand: _ctl.engine.handSente,
                     color: sente,
                     wood: _wood,
-                    interactive:
-                        _isHumanTurn() && _engine.turn == sente && !_over,
+                    interactive: _inputOpen && _ctl.engine.turn == sente,
                     selectedType:
-                        _engine.turn == sente ? _selHandType : null,
+                        _ctl.engine.turn == sente ? _selHandType : null,
                     onTapType: _onTapHand,
                   ),
                 ),
@@ -629,8 +416,8 @@ class _GameScreenState extends State<GameScreen>
               ],
             ),
           ),
-          if (_thinking) _thinkingChip(),
-          if (_over && !_reviewing) _gameOverCard(),
+          if (_ctl.phase == GamePhase.botThinking) _thinkingChip(),
+          if (_ctl.over && !_ctl.reviewing) _gameOverCard(),
         ],
       ),
     );
@@ -639,7 +426,7 @@ class _GameScreenState extends State<GameScreen>
   Widget _topBar() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: ShogiPalette.lacquer,
         boxShadow: [
           BoxShadow(color: Colors.black45, blurRadius: 10, offset: Offset(0, 4)),
@@ -649,10 +436,10 @@ class _GameScreenState extends State<GameScreen>
         children: [
           Expanded(
             child: _playerChip(
-              _config.goteName,
+              _ctl.config.goteName,
               '後手',
-              _engine.turn == gote && !_over,
-              _engine.handGote.length,
+              _ctl.engine.turn == gote && !_ctl.over,
+              _ctl.engine.handGote.length,
             ),
           ),
           Container(
@@ -668,11 +455,11 @@ class _GameScreenState extends State<GameScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('${(_engine.ply ~/ 2) + 1}手',
+                Text('${(_ctl.engine.ply ~/ 2) + 1}手',
                     style: ShogiType.stat.copyWith(
                         color: ShogiPalette.washi, fontSize: 14)),
-                Text(_clockText(),
-                    style: const TextStyle(
+                Text(_ctl.clockText(),
+                    style: TextStyle(
                         color: ShogiPalette.washi,
                         fontSize: 11,
                         fontFeatures: [FontFeature.tabularFigures()])),
@@ -681,10 +468,10 @@ class _GameScreenState extends State<GameScreen>
           ),
           Expanded(
             child: _playerChip(
-              _config.senteName,
+              _ctl.config.senteName,
               '先手',
-              _engine.turn == sente && !_over,
-              _engine.handSente.length,
+              _ctl.engine.turn == sente && !_ctl.over,
+              _ctl.engine.handSente.length,
             ),
           ),
           const SizedBox(width: 6),
@@ -716,7 +503,7 @@ class _GameScreenState extends State<GameScreen>
           Flexible(
             child: Text(name,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                     color: ShogiPalette.washi,
                     fontSize: 13,
                     fontWeight: FontWeight.w600)),
@@ -730,7 +517,7 @@ class _GameScreenState extends State<GameScreen>
               borderRadius: BorderRadius.circular(6),
             ),
             child: Text('×$captured',
-                style: const TextStyle(
+                style: TextStyle(
                     color: ShogiPalette.emberGold,
                     fontSize: 11,
                     fontWeight: FontWeight.w700)),
@@ -740,11 +527,46 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  /// Narration banner — every move is announced in words.
+  Widget _narrationBar() {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: ShogiPalette.lacquer.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+            color: ShogiPalette.emberGold.withValues(alpha: 0.5)),
+      ),
+      child: Text(
+        _ctl.narration,
+        textAlign: TextAlign.center,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: ShogiType.title(13, ShogiPalette.washi),
+      ),
+    );
+  }
+
   Widget _actionBar() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        _actionPlaque('待', 'Undo', Icons.undo, _undo),
+        _actionPlaque('待', 'Undo', Icons.undo, _ctl.undo),
+        _actionPlaque('持', 'Impasse', Icons.balance, () {
+          AudioService.I.click();
+          _ctl.prepareImpasseOffer();
+          if (_ctl.impasseOffer == null && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                  'Impasse needs both kings deep in enemy territory.',
+                  style: TextStyle(color: Colors.white)),
+              backgroundColor: ShogiPalette.lacquer,
+              duration: Duration(seconds: 2),
+            ));
+          }
+        }),
         _actionPlaque('和', 'Draw', Icons.handshake, _offerDraw),
         _actionPlaque('投', 'Resign', Icons.flag, _resign),
       ],
@@ -760,7 +582,7 @@ class _GameScreenState extends State<GameScreen>
       },
       child: Container(
         padding:
-            const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: ShogiMaterials.plaqueButton(radius: 10),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -780,7 +602,7 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _thinkingChip() {
     return Positioned(
-      top: 86,
+      top: 120,
       left: 0,
       right: 0,
       child: Center(
@@ -791,7 +613,7 @@ class _GameScreenState extends State<GameScreen>
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(
+              SizedBox(
                 width: 14,
                 height: 14,
                 child: CircularProgressIndicator(
@@ -822,74 +644,66 @@ class _GameScreenState extends State<GameScreen>
                   width: 340,
                   padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
                   decoration: ShogiMaterials.washiCard(),
-                  child: Stack(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Positioned.fill(
-                        child: CustomPaint(
-                            painter: WashiPainter(seed: 9)),
-                      ),
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
+                      Text(_ctl.endTitle,
+                          style: ShogiType.kanji(
+                              52, ShogiPalette.ink,
+                              spacing: 10)),
+                      if (_ctl.winner != null)
+                        Text('${_ctl.nameOf(_ctl.winner!)} wins',
+                            style: ShogiType.title(
+                                19, ShogiPalette.vermilion)),
+                      const SizedBox(height: 4),
+                      Text(_ctl.endReason,
+                          textAlign: TextAlign.center,
+                          style: ShogiType.body(
+                              15, ShogiPalette.ink)),
+                      const SizedBox(height: 14),
+                      Row(
+                        mainAxisAlignment:
+                            MainAxisAlignment.spaceEvenly,
                         children: [
-                          Text(_endTitle,
-                              style: ShogiType.kanji(
-                                  52, ShogiPalette.ink,
-                                  spacing: 10)),
-                          if (_winner != null)
-                            Text('${_name(_winner!)} wins',
-                                style: ShogiType.title(
-                                    19, ShogiPalette.vermilion)),
-                          const SizedBox(height: 4),
-                          Text(_endReason,
-                              textAlign: TextAlign.center,
-                              style: ShogiType.body(
-                                  15, ShogiPalette.ink)),
-                          const SizedBox(height: 14),
-                          Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.spaceEvenly,
-                            children: [
-                              _statPlaque(
-                                  '手数', '${(_engine.ply ~/ 2) + 1}'),
-                              _statPlaque('時間', _clockText()),
-                              _statPlaque('駒取',
-                                  '${_engine.capturedCount()}'),
-                            ],
-                          ),
-                          const SizedBox(height: 18),
-                          PlaqueButton(
-                            kanji: '再',
-                            label: 'Rematch',
-                            primary: true,
-                            width: 220,
-                            onTap: () {
-                              AudioService.I.click();
-                              _newGame();
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          PlaqueButton(
-                            kanji: '帰',
-                            label: 'Main menu',
-                            width: 220,
-                            onTap: () {
-                              AudioService.I.click();
-                              unawaited(AudioService.I.menuMusic());
-                              Navigator.of(context).pop();
-                            },
-                          ),
-                          const SizedBox(height: 8),
-                          TextButton(
-                            onPressed: () {
-                              AudioService.I.click();
-                              setState(() => _reviewing = true);
-                            },
-                            child: const Text('盤面を見る — Review board',
-                                style: TextStyle(
-                                    color: ShogiPalette.vermilion,
-                                    fontWeight: FontWeight.w600)),
-                          ),
+                          _statPlaque(
+                              '手数', '${(_ctl.engine.ply ~/ 2) + 1}'),
+                          _statPlaque('時間', _ctl.clockText()),
+                          _statPlaque('駒取',
+                              '${_ctl.engine.capturedCount()}'),
                         ],
+                      ),
+                      const SizedBox(height: 18),
+                      PlaqueButton(
+                        kanji: '再',
+                        label: 'Rematch',
+                        primary: true,
+                        width: 220,
+                        onTap: () {
+                          AudioService.I.click();
+                          _ctl.newGame();
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      PlaqueButton(
+                        kanji: '帰',
+                        label: 'Main menu',
+                        width: 220,
+                        onTap: () {
+                          AudioService.I.click();
+                          unawaited(AudioService.I.menuMusic());
+                          Navigator.of(context).pop();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: () {
+                          AudioService.I.click();
+                          setState(() => _ctl.reviewing = true);
+                        },
+                        child: Text('盤面を見る — Review board',
+                            style: TextStyle(
+                                color: ShogiPalette.vermilion,
+                                fontWeight: FontWeight.w600)),
                       ),
                     ],
                   ),
@@ -952,14 +766,14 @@ class _PromotionDialog extends StatelessWidget {
             Text('成りますか？',
                 style: ShogiType.kanji(26, ShogiPalette.ink, spacing: 4)),
             const SizedBox(height: 2),
-            const Text('Promote this piece?',
+            Text('Promote this piece?',
                 style: TextStyle(color: ShogiPalette.warmGray)),
             const SizedBox(height: 14),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 ShogiPiece(piece: piece, size: 54, wood: wood),
-                const Padding(
+                Padding(
                   padding: EdgeInsets.symmetric(horizontal: 10),
                   child: Icon(Icons.arrow_forward,
                       color: ShogiPalette.vermilion),
@@ -998,6 +812,116 @@ class _PromotionDialog extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Impasse (jishōgi) declaration dialog with the 24-point count.
+class _ImpasseDialog extends StatelessWidget {
+  final String declarerName;
+  final String senteName;
+  final String goteName;
+  final int sentePoints;
+  final int gotePoints;
+  final String verdict; // 'sente' | 'gote' | 'draw'
+  const _ImpasseDialog({
+    required this.declarerName,
+    required this.senteName,
+    required this.goteName,
+    required this.sentePoints,
+    required this.gotePoints,
+    required this.verdict,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final wins =
+        (verdict == 'sente' && declarerName == senteName) ||
+            (verdict == 'gote' && declarerName == goteName);
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.all(22),
+        decoration: ShogiMaterials.washiCard(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('持将棋',
+                style: ShogiType.kanji(30, ShogiPalette.ink, spacing: 8)),
+            Text('Impasse declaration',
+                style: TextStyle(color: ShogiPalette.warmGray)),
+            const SizedBox(height: 10),
+            Text(
+              '$declarerName declares impasse — both kings are entrenched. '
+              'Counting pieces (rook/bishop/promoted = 5, others = 1):',
+              textAlign: TextAlign.center,
+              style: ShogiType.body(14, ShogiPalette.ink),
+            ),
+            const SizedBox(height: 14),
+            _countRow(senteName, '先手', sentePoints),
+            const SizedBox(height: 8),
+            _countRow(goteName, '後手', gotePoints),
+            const SizedBox(height: 12),
+            Text(
+              wins
+                  ? '$declarerName has 24+ points with an entered king — wins the impasse.'
+                  : 'Neither side meets the win condition (entered king + 24 points) — the game is a draw.',
+              textAlign: TextAlign.center,
+              style: ShogiType.body(14, ShogiPalette.vermilionDeep),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                PlaqueButton(
+                  kanji: '決',
+                  label: 'Confirm',
+                  primary: true,
+                  width: 130,
+                  onTap: () {
+                    AudioService.I.click();
+                    Navigator.of(context).pop(true);
+                  },
+                ),
+                PlaqueButton(
+                  kanji: '戻',
+                  label: 'Cancel',
+                  width: 130,
+                  onTap: () {
+                    AudioService.I.click();
+                    Navigator.of(context).pop(false);
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _countRow(String name, String tag, int pts) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: ShogiPalette.kayaAmber.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: ShogiPalette.kayaDeep),
+      ),
+      child: Row(
+        children: [
+          Text(tag,
+              style: ShogiType.kanji(16, ShogiPalette.ink, spacing: 2)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(name,
+                overflow: TextOverflow.ellipsis,
+                style: ShogiType.title(15, ShogiPalette.ink)),
+          ),
+          Text('$pts pts',
+              style: ShogiType.title(16, ShogiPalette.vermilion)),
+        ],
       ),
     );
   }
@@ -1079,7 +1003,7 @@ class _PauseDialog extends StatelessWidget {
           children: [
             Text('休止中',
                 style: ShogiType.kanji(30, ShogiPalette.ink, spacing: 8)),
-            const Text('Paused',
+            Text('Paused',
                 style: TextStyle(color: ShogiPalette.warmGray)),
             const SizedBox(height: 16),
             PlaqueButton(
@@ -1128,5 +1052,3 @@ class _PauseDialog extends StatelessWidget {
     );
   }
 }
-
-

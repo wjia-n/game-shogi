@@ -1,4 +1,4 @@
-/// Settings: sound, piece wood, board wood, game options. All persisted.
+/// Settings: sound, pieces, board, theme, names, game options.
 library;
 
 import 'package:flutter/material.dart';
@@ -17,13 +17,42 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  SettingsService get _s => SettingsService.I;
+  final _s = SettingsService.I;
 
-  Future<void> _update(Future<void> Function() apply) async {
-    await _s.update(() async {
-      await apply();
-    });
-    await AudioService.I.refresh();
+  late final TextEditingController _humanCtrl;
+  late final TextEditingController _botCtrl;
+  late final TextEditingController _senteCtrl;
+  late final TextEditingController _goteCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _humanCtrl = TextEditingController(text: _s.humanName);
+    _botCtrl = TextEditingController(text: _s.botName);
+    _senteCtrl = TextEditingController(text: _s.senteName);
+    _goteCtrl = TextEditingController(text: _s.goteName);
+  }
+
+  @override
+  void dispose() {
+    _humanCtrl.dispose();
+    _botCtrl.dispose();
+    _senteCtrl.dispose();
+    _goteCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _applyAudio() async {
+    await AudioService.I.refresh(
+      musicOn: _s.musicOn,
+      sfxOn: _s.sfxOn,
+      volume: _s.volume,
+      musicVolume: _s.musicVolume,
+    );
+  }
+
+  Future<void> _set(Future<void> Function() fn) async {
+    await _s.update(fn);
     setState(() {});
   }
 
@@ -34,159 +63,160 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Positioned.fill(child: CustomPaint(painter: TatamiPainter())),
           SafeArea(
-            child: Column(
-              children: [
-                _header(),
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 8),
-                    child: Column(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      DiscButton(
+                        icon: Icons.arrow_back,
+                        size: 42,
+                        onTap: () {
+                          AudioService.I.click();
+                          Navigator.of(context).pop();
+                        },
+                      ),
+                      const SizedBox(width: 12),
+                      Text('設定',
+                          style: ShogiType.kanji(32, ShogiPalette.ink,
+                              spacing: 8)),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _group('音 Sound', [
+                    _toggleRow('Music', _s.musicOn,
+                        (v) => _set(() async => _s.musicOn = v).then((_) => _applyAudio())),
+                    _toggleRow('Sound effects', _s.sfxOn,
+                        (v) => _set(() async => _s.sfxOn = v).then((_) => _applyAudio())),
+                    _sliderRow('Master volume', _s.volume,
+                        (v) => _set(() async => _s.volume = v).then((_) => _applyAudio())),
+                    _sliderRow('Music volume', _s.musicVolume,
+                        (v) => _set(() async => _s.musicVolume = v).then((_) => _applyAudio())),
+                  ]),
+                  _group('意匠 Theme', [
+                    SizedBox(
+                      height: 96,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: ShogiThemes.all.length + 1,
+                        separatorBuilder: (_, _) =>
+                            const SizedBox(width: 10),
+                        itemBuilder: (ctx, i) {
+                          if (i == ShogiThemes.all.length) {
+                            return _themeSwatch('custom', '自', 'Custom',
+                                Color(_s.customBg), Color(_s.customAccent));
+                          }
+                          final t = ShogiThemes.all[i];
+                          return _themeSwatch(t.id, t.kanji, t.label,
+                              t.tatami, t.vermilion);
+                        },
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: () {
+                          AudioService.I.click();
+                          Navigator.of(context)
+                              .pushNamed('/custom-theme')
+                              .then((_) => setState(() {}));
+                        },
+                        child: Text('Create a custom theme…',
+                            style: TextStyle(
+                                color: ShogiPalette.vermilion,
+                                fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ]),
+                  _group('駒 Pieces', [
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
                       children: [
-                        _group('音 Sound', [
-                          _toggleRow('音楽 Music', 'Background koto melodies',
-                              _s.musicOn, (v) => _update(() async {
-                                    _s.musicOn = v;
-                                    if (v) {
-                                      await AudioService.I.menuMusic();
-                                    }
-                                  })),
-                          _toggleRow('効果音 SFX', 'Wooden clacks & drums',
-                              _s.sfxOn, (v) => _update(() async {
-                                    _s.sfxOn = v;
-                                  })),
-                          _sliderRow('音量 Master volume', _s.volume,
-                              (v) => _update(() async {
-                                    _s.volume = v;
-                                  })),
-                          _sliderRow('音楽音量 Music volume',
-                              _s.musicVolume, (v) => _update(() async {
-                                    _s.musicVolume = v;
-                                  })),
-                        ]),
-                        _group('駒 Pieces', [
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 6),
-                            child: Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment.spaceEvenly,
-                              children: [
-                                for (final style in pieceStyles)
-                                  _woodSwatch(
-                                    selected:
-                                        _s.pieceStyle == style,
-                                    label: pieceStyleLabel[style]!,
-                                    onTap: () => _update(() async {
-                                          _s.pieceStyle = style;
-                                          await AudioService.I
-                                              .click();
-                                        }),
-                                    piece: ShogiPiece(
-                                      piece: sente * ptKing,
-                                      size: 52,
-                                      wood: pieceWoods[style]!,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ]),
-                        _group('盤 Board', [
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 6),
-                            child: Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment.spaceEvenly,
-                              children: [
-                                for (final b in boardWoodIds)
-                                  _boardSwatch(
-                                    selected: _s.boardWood == b,
-                                    label: boardWoodLabel[b]!,
-                                    wood: boardWoods[b]!,
-                                    onTap: () => _update(() async {
-                                          _s.boardWood = b;
-                                          await AudioService.I
-                                              .click();
-                                        }),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          _toggleRow('合法手 Legal-move dots',
-                              'Show vermilion dots on legal squares',
-                              _s.showLegalDots, (v) => _update(() async {
-                                    _s.showLegalDots = v;
-                                  })),
-                          _toggleRow('座標 Coordinates',
-                              'File numbers & rank kanji on the board',
-                              _s.showCoordinates, (v) => _update(() async {
-                                    _s.showCoordinates = v;
-                                  })),
-                        ]),
-                        _group('対局 Game', [
-                          _toggleRow('投了確認 Confirm resign',
-                              'Ask before resigning a game',
-                              _s.confirmResign, (v) => _update(() async {
-                                    _s.confirmResign = v;
-                                  })),
-                          _toggleRow('待った Undo',
-                              'Allow taking back moves',
-                              _s.allowUndo, (v) => _update(() async {
-                                    _s.allowUndo = v;
-                                  })),
-                        ]),
-                        const SizedBox(height: 8),
-                        PlaqueButton(
-                          kanji: '戻',
-                          label: 'Reset to defaults',
-                          width: 230,
-                          onTap: () async {
-                            await _s.resetDefaults();
-                            await AudioService.I.refresh();
-                            setState(() {});
-                          },
-                        ),
-                        const SizedBox(height: 24),
+                        for (final id in pieceStyles)
+                          _pieceSwatch(id),
                       ],
                     ),
+                  ]),
+                  _group('盤 Board', [
+                    Text('Wood',
+                        style: ShogiType.title(14, ShogiPalette.ink)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final id in boardWoodIds)
+                          _optionChip(
+                            selected: _s.boardWood == id,
+                            label: boardWoodLabel[id]!,
+                            onTap: () =>
+                                _set(() async => _s.boardWood = id),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text('Grid accent',
+                        style: ShogiType.title(14, ShogiPalette.ink)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final id in boardAccentIds)
+                          _optionChip(
+                            selected: _s.boardAccent == id,
+                            label: boardAccentLabel[id]!,
+                            onTap: () =>
+                                _set(() async => _s.boardAccent = id),
+                          ),
+                      ],
+                    ),
+                  ]),
+                  _group('名前 Player names', [
+                    _nameRow('Your name (vs Bot)', _humanCtrl,
+                        (v) => _s.humanName = v.isEmpty ? 'You' : v),
+                    _nameRow('Bot name', _botCtrl,
+                        (v) => _s.botName = v.isEmpty ? 'Bot' : v),
+                    _nameRow('先手 Sente (2 players)', _senteCtrl,
+                        (v) => _s.senteName = v.isEmpty ? 'Black' : v),
+                    _nameRow('後手 Gote (2 players)', _goteCtrl,
+                        (v) => _s.goteName = v.isEmpty ? 'White' : v),
+                  ]),
+                  _group('対局 Game', [
+                    _toggleRow('Show legal-move dots', _s.showLegalDots,
+                        (v) => _set(() async => _s.showLegalDots = v)),
+                    _toggleRow('Show coordinates', _s.showCoordinates,
+                        (v) => _set(() async => _s.showCoordinates = v)),
+                    _toggleRow('Confirm before resign', _s.confirmResign,
+                        (v) => _set(() async => _s.confirmResign = v)),
+                    _toggleRow('Allow undo', _s.allowUndo,
+                        (v) => _set(() async => _s.allowUndo = v)),
+                  ]),
+                  Center(
+                    child: PlaqueButton(
+                      kanji: '戻',
+                      label: 'Reset to defaults',
+                      width: 240,
+                      onTap: () async {
+                        AudioService.I.click();
+                        await _s.resetDefaults();
+                        await _applyAudio();
+                        _humanCtrl.text = _s.humanName;
+                        _botCtrl.text = _s.botName;
+                        _senteCtrl.text = _s.senteName;
+                        _goteCtrl.text = _s.goteName;
+                        setState(() {});
+                      },
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 24),
+                ],
+              ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _header() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: const BoxDecoration(
-        color: ShogiPalette.lacquer,
-        boxShadow: [
-          BoxShadow(color: Colors.black45, blurRadius: 10, offset: Offset(0, 4)),
-        ],
-      ),
-      child: Row(
-        children: [
-          DiscButton(
-              icon: Icons.arrow_back,
-              size: 42,
-              onTap: () {
-                AudioService.I.click();
-                Navigator.of(context).pop();
-              }),
-          const SizedBox(width: 12),
-          Text('設定',
-              style:
-                  ShogiType.kanji(28, ShogiPalette.washi, spacing: 8)),
-          const SizedBox(width: 8),
-          const Text('Settings',
-              style:
-                  TextStyle(color: ShogiPalette.warmGray, fontSize: 14)),
         ],
       ),
     );
@@ -195,41 +225,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _group(String title, List<Widget> children) {
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 14),
+      margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
       decoration: ShogiMaterials.washiCard(radius: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(title, style: ShogiType.title(16, ShogiPalette.ink)),
-          const Divider(color: ShogiPalette.washiShade),
+          const SizedBox(height: 12),
           ...children,
         ],
       ),
     );
   }
 
-  Widget _toggleRow(String title, String subtitle, bool value,
-      ValueChanged<bool> onChanged) {
+  Widget _toggleRow(
+      String label, bool value, ValueChanged<bool> onChanged) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: const TextStyle(
-                        color: ShogiPalette.ink,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15)),
-                Text(subtitle,
-                    style: const TextStyle(
-                        color: ShogiPalette.warmGray, fontSize: 12)),
-              ],
-            ),
-          ),
+              child:
+                  Text(label, style: ShogiType.body(15, ShogiPalette.ink))),
           WoodToggle(
               value: value,
               onChanged: (v) {
@@ -242,102 +260,158 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _sliderRow(
-      String title, double value, ValueChanged<double> onChanged) {
+      String label, double value, ValueChanged<double> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+              width: 120,
+              child:
+                  Text(label, style: ShogiType.body(15, ShogiPalette.ink))),
+          Expanded(
+            child: BambooSlider(value: value, onChanged: onChanged),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _themeSwatch(String id, String kanji, String label, Color bg,
+      Color accent) {
+    final selected = _s.themeId == id;
+    return GestureDetector(
+      onTap: () {
+        AudioService.I.click();
+        _set(() async => _s.themeId = id);
+      },
+      child: Container(
+        width: 76,
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: selected ? accent : ShogiPalette.washiShade,
+              width: selected ? 3 : 1),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(kanji,
+                style: ShogiType.kanji(20, ShogiPalette.ink, spacing: 0)),
+            const SizedBox(height: 2),
+            Text(label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: ShogiPalette.ink)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pieceSwatch(String id) {
+    final selected = _s.pieceStyle == id;
+    final w = pieceWoods[id]!;
+    return GestureDetector(
+      onTap: () {
+        AudioService.I.click();
+        _set(() async => _s.pieceStyle = id);
+      },
+      child: Container(
+        width: 96,
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: ShogiPalette.washiShade.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: selected
+                  ? ShogiPalette.vermilion
+                  : ShogiPalette.washiShade,
+              width: selected ? 2.5 : 1),
+        ),
+        child: Column(
+          children: [
+            ShogiPiece(piece: sente * ptSilver, size: 44, wood: w),
+            const SizedBox(height: 4),
+            Text(pieceStyleLabel[id]!,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: ShogiPalette.ink)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _optionChip(
+      {required bool selected,
+      required String label,
+      required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: () {
+        AudioService.I.click();
+        onTap();
+      },
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? ShogiPalette.lacquer
+              : ShogiPalette.kayaAmber.withValues(alpha: 0.4),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+              color: selected
+                  ? ShogiPalette.vermilion
+                  : ShogiPalette.kayaDeep,
+              width: selected ? 2 : 1),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                color: selected ? ShogiPalette.washi : ShogiPalette.ink,
+                fontWeight: FontWeight.w600,
+                fontSize: 13)),
+      ),
+    );
+  }
+
+  Widget _nameRow(String label, TextEditingController ctrl,
+      ValueChanged<String> onSaved) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(title,
-                  style: const TextStyle(
-                      color: ShogiPalette.ink,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15)),
-              Text('${(value * 100).round()}%',
-                  style: ShogiType.stat.copyWith(fontSize: 14)),
-            ],
-          ),
-          BambooSlider(value: value, onChanged: onChanged),
-        ],
-      ),
-    );
-  }
-
-  Widget _woodSwatch({
-    required bool selected,
-    required String label,
-    required VoidCallback onTap,
-    required Widget piece,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: ShogiPalette.washiShade.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: selected
-                    ? ShogiPalette.vermilion
-                    : Colors.transparent,
-                width: 2.5,
+          SizedBox(
+              width: 150,
+              child:
+                  Text(label, style: ShogiType.body(14, ShogiPalette.ink))),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: ShogiPalette.washiShade.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: ShogiPalette.kayaDeep),
+              ),
+              child: TextField(
+                controller: ctrl,
+                maxLength: 14,
+                style: ShogiType.title(14, ShogiPalette.ink),
+                decoration: const InputDecoration(
+                    counterText: '', border: InputBorder.none),
+                onChanged: (v) =>
+                    _s.update(() async => onSaved(v.trim())),
               ),
             ),
-            child: piece,
           ),
-          const SizedBox(height: 6),
-          Text(label,
-              style: TextStyle(
-                  color: ShogiPalette.ink,
-                  fontWeight:
-                      selected ? FontWeight.w800 : FontWeight.w500,
-                  fontSize: 13)),
-        ],
-      ),
-    );
-  }
-
-  Widget _boardSwatch({
-    required bool selected,
-    required String label,
-    required BoardWood wood,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: wood.edge, width: 5),
-              color: wood.face,
-              boxShadow: const [
-                BoxShadow(
-                    color: Colors.black38,
-                    blurRadius: 6,
-                    offset: Offset(0, 3)),
-              ],
-            ),
-            child: selected
-                ? const Icon(Icons.check,
-                    color: ShogiPalette.vermilion, size: 28)
-                : null,
-          ),
-          const SizedBox(height: 6),
-          Text(label,
-              style: TextStyle(
-                  color: ShogiPalette.ink,
-                  fontWeight:
-                      selected ? FontWeight.w800 : FontWeight.w500,
-                  fontSize: 13)),
         ],
       ),
     );

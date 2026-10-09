@@ -14,7 +14,6 @@ class GameConfig {
   final String handicap; // 'even', 'lance', '2piece', '4piece', '6piece'
   final String senteName;
   final String goteName;
-  final String playerName;
 
   const GameConfig({
     required this.mode,
@@ -22,7 +21,6 @@ class GameConfig {
     this.handicap = 'even',
     this.senteName = 'You',
     this.goteName = 'Bot',
-    this.playerName = 'You',
   });
 
   /// Which color the human plays in bot mode (0 = both, for 2p).
@@ -35,7 +33,6 @@ class GameConfig {
         'handicap': handicap,
         'senteName': senteName,
         'goteName': goteName,
-        'playerName': playerName,
       };
 
   factory GameConfig.fromJson(Map<String, dynamic> j) => GameConfig(
@@ -44,7 +41,6 @@ class GameConfig {
         handicap: j['handicap'] as String? ?? 'even',
         senteName: j['senteName'] as String? ?? 'You',
         goteName: j['goteName'] as String? ?? 'Bot',
-        playerName: j['playerName'] as String? ?? 'You',
       );
 }
 

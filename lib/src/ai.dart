@@ -269,6 +269,8 @@ Future<String> aiCompute(Map<String, dynamic> payload) async {
   final difficulty = payload['difficulty'] as int? ?? 1;
   final rng = Random(payload['seed'] as int? ?? 12345);
   final pathKeys = repKeys.toSet();
+  // Test override: smaller per-move time budget for fast simulations.
+  final deadlineOverride = payload['deadlineMs'] as int?;
 
   ShogiMove pick;
   int score = 0;
@@ -278,17 +280,17 @@ Future<String> aiCompute(Map<String, dynamic> payload) async {
         final moves = e.legalMoves(e.turn);
         pick = moves[rng.nextInt(moves.length)];
       } else {
-        final s = _Searcher(e, 600, pathKeys);
+        final s = _Searcher(e, deadlineOverride ?? 600, pathKeys);
         pick = s.searchRoot(1, rng, randomize: true, topN: 5);
         score = s.lastScore;
       }
     case 2: // Master: iterative deepening, quiescence, ~2.5s budget.
-      final s = _Searcher(e, 2500, pathKeys);
+      final s = _Searcher(e, deadlineOverride ?? 2500, pathKeys);
       pick = s.searchRoot(6, rng);
       score = s.lastScore;
     case 1: // Skilled: depth 3 within ~1s.
     default:
-      final s = _Searcher(e, 1000, pathKeys);
+      final s = _Searcher(e, deadlineOverride ?? 1000, pathKeys);
       pick = s.searchRoot(3, rng);
       score = s.lastScore;
   }

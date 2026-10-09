@@ -1,17 +1,15 @@
-/// Main menu: 将棋 title, hero pieces, mode/difficulty/handicap, settings, help.
+/// Main menu: 将棋 title, mode/difficulty/handicap, renameable player
+/// names, theme picker, settings, PRO, how-to-play.
 library;
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../audio.dart';
-import '../engine.dart';
 import '../save.dart';
 import '../settings.dart';
 import '../theme.dart';
-import '../widgets.dart';
 
 class MenuScreen extends StatefulWidget {
   const MenuScreen({super.key});
@@ -21,33 +19,43 @@ class MenuScreen extends StatefulWidget {
 }
 
 class _MenuScreenState extends State<MenuScreen> {
+  final _s = SettingsService.I;
   String _mode = 'bot'; // 'bot' | '2p'
-  int _difficulty = 1;
   String _handicap = 'even';
   bool _hasSave = false;
-  String _playerName = 'You';
-  final _nameCtrl = TextEditingController();
+
+  late final TextEditingController _humanCtrl;
+  late final TextEditingController _botCtrl;
+  late final TextEditingController _senteCtrl;
+  late final TextEditingController _goteCtrl;
 
   @override
   void initState() {
     super.initState();
+    _humanCtrl = TextEditingController(text: _s.humanName);
+    _botCtrl = TextEditingController(text: _s.botName);
+    _senteCtrl = TextEditingController(text: _s.senteName);
+    _goteCtrl = TextEditingController(text: _s.goteName);
     _load();
     unawaited(AudioService.I.menuMusic());
   }
 
   Future<void> _load() async {
-    final p = await SharedPreferences.getInstance();
     _hasSave = await GameSave.has();
-    _playerName = p.getString('shogi_playerName') ?? 'You';
-    _nameCtrl.text = _playerName;
-    _difficulty = p.getInt('shogi_difficulty') ?? 1;
     if (mounted) setState(() {});
   }
 
   Future<void> _savePrefs() async {
-    final p = await SharedPreferences.getInstance();
-    await p.setInt('shogi_difficulty', _difficulty);
-    await p.setString('shogi_playerName', _playerName);
+    await _s.update(() async {
+      _s.humanName =
+          _humanCtrl.text.trim().isEmpty ? 'You' : _humanCtrl.text.trim();
+      _s.botName =
+          _botCtrl.text.trim().isEmpty ? 'Bot' : _botCtrl.text.trim();
+      _s.senteName =
+          _senteCtrl.text.trim().isEmpty ? 'Black' : _senteCtrl.text.trim();
+      _s.goteName =
+          _goteCtrl.text.trim().isEmpty ? 'White' : _goteCtrl.text.trim();
+    });
   }
 
   void _start({required bool cont}) {
@@ -65,25 +73,22 @@ class _MenuScreenState extends State<MenuScreen> {
   }
 
   GameConfig _config() {
-    final human = _playerName.trim().isEmpty ? 'You' : _playerName.trim();
     if (_mode == '2p') {
       return GameConfig(
         mode: '2p',
         handicap: _handicap,
-        senteName: _handicap == 'even' ? human : 'Black',
-        goteName: _handicap == 'even' ? 'Friend' : human,
-        playerName: human,
+        senteName: _s.senteName,
+        goteName: _s.goteName,
       );
     }
     // Bot mode: human is sente on even, gote (first mover) on handicap.
     final humanSente = _handicap == 'even';
     return GameConfig(
       mode: 'bot',
-      difficulty: _difficulty,
+      difficulty: _s.difficulty,
       handicap: _handicap,
-      senteName: humanSente ? human : 'Bot',
-      goteName: humanSente ? 'Bot' : human,
-      playerName: human,
+      senteName: humanSente ? _s.humanName : _s.botName,
+      goteName: humanSente ? _s.botName : _s.humanName,
     );
   }
 
@@ -94,13 +99,15 @@ class _MenuScreenState extends State<MenuScreen> {
 
   @override
   void dispose() {
-    _nameCtrl.dispose();
+    _humanCtrl.dispose();
+    _botCtrl.dispose();
+    _senteCtrl.dispose();
+    _goteCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final wood = pieceWoods[SettingsService.I.pieceStyle] ?? pieceWoods['kaya']!;
     return Scaffold(
       body: Stack(
         children: [
@@ -110,39 +117,39 @@ class _MenuScreenState extends State<MenuScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
                 children: [
-                  const SizedBox(height: 28),
-                  // Hero pieces.
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Transform.rotate(
-                          angle: -0.12,
-                          child: ShogiPiece(
-                              piece: sente * ptSilver, size: 54, wood: wood)),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        child: ShogiPiece(
-                            piece: sente * ptKing, size: 72, wood: wood),
-                      ),
-                      Transform.rotate(
-                          angle: 0.12,
-                          child: ShogiPiece(
-                              piece: gote * ptRook, size: 54, wood: wood)),
-                    ],
+                  const SizedBox(height: 20),
+                  // Game logo.
+                  Container(
+                    width: 120,
+                    height: 120,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: const [
+                        BoxShadow(
+                            color: Colors.black45,
+                            blurRadius: 18,
+                            offset: Offset(0, 8)),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: Image.asset('assets/images/shogi_logo.png',
+                          fit: BoxFit.cover),
+                    ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   Text('将棋',
-                      style: ShogiType.kanji(72, ShogiPalette.ink,
-                          spacing: 18)),
+                      style: ShogiType.kanji(56, ShogiPalette.ink,
+                          spacing: 16)),
                   Text('SHOGI — Japanese Chess',
-                      style: ShogiType.title(16, ShogiPalette.ink)),
+                      style: ShogiType.title(15, ShogiPalette.ink)),
                   const SizedBox(height: 4),
-                  const Text(
+                  Text(
                     'Capture, drop, checkmate — the game of generals.',
                     style: TextStyle(
                         color: ShogiPalette.warmGray, fontSize: 13),
                   ),
-                  const SizedBox(height: 22),
+                  const SizedBox(height: 18),
                   if (_hasSave)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
@@ -165,7 +172,23 @@ class _MenuScreenState extends State<MenuScreen> {
                       AudioService.I.click();
                     },
                     child: _mode == 'bot'
-                        ? _difficultyRow()
+                        ? Column(
+                            children: [
+                              _difficultyRow(),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Expanded(
+                                      child: _nameField(
+                                          'Your name', _humanCtrl)),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                      child:
+                                          _nameField('Bot name', _botCtrl)),
+                                ],
+                              ),
+                            ],
+                          )
                         : null,
                   ),
                   const SizedBox(height: 12),
@@ -178,6 +201,19 @@ class _MenuScreenState extends State<MenuScreen> {
                       setState(() => _mode = '2p');
                       AudioService.I.click();
                     },
+                    child: _mode == '2p'
+                        ? Row(
+                            children: [
+                              Expanded(
+                                  child: _nameField(
+                                      '先手 Sente', _senteCtrl)),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                  child:
+                                      _nameField('後手 Gote', _goteCtrl)),
+                            ],
+                          )
+                        : null,
                   ),
                   const SizedBox(height: 16),
                   // Handicap washi panel.
@@ -202,22 +238,53 @@ class _MenuScreenState extends State<MenuScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  // Name field.
+                  // Theme picker.
                   _washiPanel(
-                    title: '名前 Your name',
-                    child: TextField(
-                      controller: _nameCtrl,
-                      maxLength: 14,
-                      textAlign: TextAlign.center,
-                      style: ShogiType.title(16, ShogiPalette.ink),
-                      decoration: const InputDecoration(
-                        counterText: '',
-                        hintText: 'You',
-                        border: InputBorder.none,
-                        hintStyle:
-                            TextStyle(color: ShogiPalette.warmGray),
-                      ),
-                      onChanged: (v) => _playerName = v,
+                    title: '意匠 Theme',
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          height: 92,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: ShogiThemes.all.length + 1,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(width: 10),
+                            itemBuilder: (ctx, i) {
+                              if (i == ShogiThemes.all.length) {
+                                return _themeChip(
+                                  id: 'custom',
+                                  kanji: '自',
+                                  label: 'Custom',
+                                  bg: Color(_s.customBg),
+                                  accent: Color(_s.customAccent),
+                                );
+                              }
+                              final t = ShogiThemes.all[i];
+                              return _themeChip(
+                                id: t.id,
+                                kanji: t.kanji,
+                                label: t.label,
+                                bg: t.tatami,
+                                accent: t.vermilion,
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextButton(
+                          onPressed: () {
+                            AudioService.I.click();
+                            Navigator.of(context)
+                                .pushNamed('/custom-theme')
+                                .then((_) => setState(() {}));
+                          },
+                          child: Text('Create a custom theme…',
+                              style: TextStyle(
+                                  color: ShogiPalette.vermilion,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -229,7 +296,7 @@ class _MenuScreenState extends State<MenuScreen> {
                     onTap: () => _start(cont: false),
                   ),
                   const SizedBox(height: 20),
-                  // Bottom: settings disc + how-to tanzaku.
+                  // Bottom row: settings, PRO, how-to.
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -237,10 +304,17 @@ class _MenuScreenState extends State<MenuScreen> {
                         icon: Icons.settings,
                         onTap: () {
                           AudioService.I.click();
-                          Navigator.of(context).pushNamed('/settings');
+                          Navigator.of(context)
+                              .pushNamed('/settings')
+                              .then((_) => setState(() {}));
                         },
                       ),
-                      const SizedBox(width: 18),
+                      const SizedBox(width: 14),
+                      _roundLabelButton('極', 'PRO', () {
+                        AudioService.I.click();
+                        Navigator.of(context).pushNamed('/pro');
+                      }),
+                      const SizedBox(width: 14),
                       GestureDetector(
                         onTap: () {
                           AudioService.I.click();
@@ -269,7 +343,7 @@ class _MenuScreenState extends State<MenuScreen> {
                                       18, ShogiPalette.vermilion,
                                       spacing: 1)),
                               const SizedBox(width: 6),
-                              const Text('How to play',
+                              Text('How to play',
                                   style: TextStyle(
                                       color: ShogiPalette.ink,
                                       fontWeight: FontWeight.w600)),
@@ -280,7 +354,7 @@ class _MenuScreenState extends State<MenuScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  const Text('v1.0.0',
+                  Text('v1.1.0',
                       style: TextStyle(
                           color: ShogiPalette.warmGray, fontSize: 11)),
                   const SizedBox(height: 24),
@@ -289,6 +363,122 @@ class _MenuScreenState extends State<MenuScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _roundLabelButton(
+      String kanji, String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [ShogiPalette.vermilion, ShogiPalette.vermilionDeep],
+              ),
+              border:
+                  Border.all(color: ShogiPalette.emberGold, width: 1.5),
+              boxShadow: const [
+                BoxShadow(
+                    color: Colors.black54,
+                    blurRadius: 8,
+                    offset: Offset(0, 4)),
+              ],
+            ),
+            child: Text(kanji,
+                style: ShogiType.kanji(20, ShogiPalette.washi, spacing: 0)),
+          ),
+          const SizedBox(height: 4),
+          Text(label,
+              style: TextStyle(
+                  color: ShogiPalette.warmGray,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
+  Widget _themeChip({
+    required String id,
+    required String kanji,
+    required String label,
+    required Color bg,
+    required Color accent,
+  }) {
+    final selected = _s.themeId == id;
+    return GestureDetector(
+      onTap: () async {
+        AudioService.I.click();
+        await _s.update(() async => _s.themeId = id);
+        setState(() {});
+      },
+      child: Container(
+        width: 76,
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: selected ? accent : ShogiPalette.washiShade,
+              width: selected ? 3 : 1),
+          boxShadow: const [
+            BoxShadow(
+                color: Colors.black26,
+                blurRadius: 5,
+                offset: Offset(0, 2)),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(kanji,
+                style: ShogiType.kanji(20, ShogiPalette.ink, spacing: 0)),
+            const SizedBox(height: 2),
+            Text(label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: ShogiPalette.ink)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _nameField(String hint, TextEditingController ctrl) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: ShogiPalette.washiShade.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: ShogiPalette.kayaDeep),
+      ),
+      child: TextField(
+        controller: ctrl,
+        maxLength: 14,
+        textAlign: TextAlign.center,
+        style: ShogiType.title(14, ShogiPalette.ink),
+        decoration: InputDecoration(
+          counterText: '',
+          hintText: hint,
+          border: InputBorder.none,
+          hintStyle:
+              TextStyle(color: ShogiPalette.warmGray, fontSize: 12),
+        ),
+        onChanged: (_) => _savePrefs(),
       ),
     );
   }
@@ -352,14 +542,14 @@ class _MenuScreenState extends State<MenuScreen> {
                           style:
                               ShogiType.title(17, ShogiPalette.ink)),
                       Text(subtitle,
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: ShogiPalette.warmGray,
                               fontSize: 12)),
                     ],
                   ),
                 ),
                 if (selected)
-                  const Icon(Icons.check_circle,
+                  Icon(Icons.check_circle,
                       color: ShogiPalette.vermilion),
               ],
             ),
@@ -379,11 +569,12 @@ class _MenuScreenState extends State<MenuScreen> {
       children: [
         for (final d in [0, 1, 2])
           _chip(
-            selected: _difficulty == d,
+            selected: _s.difficulty == d,
             kanji: difficultyKanji[d]!,
             label: difficultyLabel[d]!,
-            onTap: () {
-              setState(() => _difficulty = d);
+            onTap: () async {
+              await _s.update(() async => _s.difficulty = d);
+              setState(() {});
               AudioService.I.click();
             },
           ),
@@ -472,7 +663,7 @@ class _MenuScreenState extends State<MenuScreen> {
                         style: ShogiType.kanji(28, ShogiPalette.ink,
                             spacing: 6))),
                 const SizedBox(height: 4),
-                const Center(
+                Center(
                     child: Text('How to play',
                         style: TextStyle(
                             color: ShogiPalette.warmGray))),
@@ -482,6 +673,7 @@ class _MenuScreenState extends State<MenuScreen> {
                   '• Captured pieces join YOUR stand — tap one, then tap an empty square to drop it back into battle.',
                   '• Pieces promote in the far three ranks: choose 成 (promote) or 不成 (keep).',
                   '• No pawn drops on the last rank, on a file with your unpromoted pawn, or to deliver checkmate.',
+                  '• If both kings invade deep, declare 持将棋 (impasse) — counted by pieces.',
                   '• Checkmate (詰み) the enemy king to win!',
                 ].map((t) => Padding(
                       padding: EdgeInsets.only(bottom: 8),

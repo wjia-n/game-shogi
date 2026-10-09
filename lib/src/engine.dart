@@ -188,23 +188,27 @@ class ShogiEngine {
       }
     }
 
+    // Authoritative starting position (verified): sente bishop on file 8
+    // (col 1) and rook on file 2 (col 7); gote mirrors through the center:
+    // bishop on file 2 (col 7), rook on file 8 (col 1).
     const back = [ptLance, ptKnight, ptSilver, ptGold, ptKing, ptGold, ptSilver, ptKnight, ptLance];
     for (int c = 0; c < 9; c++) {
       // gote (top)
       final gBack = 0 * 9 + c;
       if (!removeWhite.contains(gBack)) board[gBack] = gote * back[c];
-      final gRook = 1 * 9 + 1;
-      final gBishop = 1 * 9 + 7;
-      if (c == 1 && !removeWhite.contains(gRook)) board[gRook] = gote * ptBishop;
-      if (c == 7 && !removeWhite.contains(gBishop)) board[gBishop] = gote * ptRook;
+      final gRook = 1 * 9 + 1; // file 8
+      final gBishop = 1 * 9 + 7; // file 2
+      if (c == 1 && !removeWhite.contains(gRook)) board[gRook] = gote * ptRook;
+      if (c == 7 && !removeWhite.contains(gBishop)) board[gBishop] = gote * ptBishop;
       board[2 * 9 + c] = gote * ptPawn;
       // sente (bottom)
       board[6 * 9 + c] = sente * ptPawn;
-      if (c == 1) board[7 * 9 + 1] = sente * ptRook;
-      if (c == 7) board[7 * 9 + 7] = sente * ptBishop;
+      if (c == 1) board[7 * 9 + 1] = sente * ptBishop; // file 8
+      if (c == 7) board[7 * 9 + 7] = sente * ptRook; // file 2
       board[8 * 9 + c] = sente * back[c];
     }
     turn = handicap == 'even' ? sente : gote;
+    recordPosition(); // the initial position counts for sennichite
   }
 
   // ------------------------------------------------------- move generation
@@ -382,6 +386,7 @@ class ShogiEngine {
 
   // ------------------------------------------------------------ apply/undo
 
+  /// Applies a move WITHOUT touching history/repetition (used by search).
   ShogiUndo applyMove(ShogiMove m) {
     final me = turn;
     int movedPiece = 0;
@@ -403,6 +408,26 @@ class ShogiEngine {
     turn = -me;
     ply++;
     return ShogiUndo(m, me, movedPiece, capturedPiece);
+  }
+
+  /// Real-game move: applies the move, records undo history and the new
+  /// position for repetition tracking. The engine owns ALL turn state —
+  /// the UI must use this (never [applyMove] directly) for real moves.
+  ShogiUndo pushMove(ShogiMove m) {
+    final u = applyMove(m);
+    history.add(u);
+    recordPosition();
+    return u;
+  }
+
+  /// Undoes the most recent real move (inverse of [pushMove]).
+  /// Returns false when there is nothing to undo.
+  bool popMove() {
+    if (history.isEmpty) return false;
+    final u = history.removeLast();
+    undoMove(u);
+    truncateRepetition(repKeys.length - 1);
+    return true;
   }
 
   void undoMove(ShogiUndo u) {
@@ -503,9 +528,11 @@ class ShogiEngine {
     for (final d in _diag) {
       if (ray(d, (t) => t == ptBishop || t == ptDragonHorse)) return true;
     }
-    // Lance: slides forward only, from attacker's perspective.
+    // Lance: slides forward only, from the attacker's perspective. A sente
+    // lance sits on sente's side of the target (higher row index) and
+    // attacks upward; a gote lance sits below it and attacks downward.
     {
-      final dir = byColor == sente ? [-1, 0] : [1, 0];
+      final dir = byColor == sente ? [1, 0] : [-1, 0];
       int nr = r + dir[0], nc = c + dir[1];
       while (onBoard(nr, nc)) {
         final q = board[nr * 9 + nc];
@@ -618,6 +645,52 @@ class ShogiEngine {
     return 1; // plain sennichite draw
   }
 
+  // --------------------------------------------------------------- impasse
+
+  /// True when [color]'s king has entered the opponent's camp (the
+  /// promotion zone on the far side).
+  bool kingEntered(int color) {
+    final k = _kingSquare(color);
+    if (k < 0) return false;
+    final r = k ~/ 9;
+    return color == sente ? r <= 2 : r >= 6;
+  }
+
+  /// True when BOTH kings have entered the opposing camps — the position
+  /// is eligible for an impasse (jishōgi) declaration, RULES.md §7.5.
+  bool bothKingsEntered() => kingEntered(sente) && kingEntered(gote);
+
+  /// Jishōgi point count for [color], RULES.md §8: rook, bishop and
+  /// promoted pieces count 5 each; every other piece except the king
+  /// counts 1; the king counts 0. Pieces on the board AND in hand count.
+  int impassePoints(int color) {
+    int pts = 0;
+    int count(int t) {
+      if (t == ptKing) return 0;
+      if (t == ptRook || t == ptBishop || t > ptPawn) return 5;
+      return 1;
+    }
+
+    for (int i = 0; i < 81; i++) {
+      final p = board[i];
+      if (p != 0 && pColor(p) == color) pts += count(pType(p));
+    }
+    for (final t in _hand(color)) {
+      pts += count(t);
+    }
+    return pts;
+  }
+
+  /// Adjudicates a declared impasse per RULES.md §8/§10.4.
+  /// Returns 'sente' / 'gote' when the declarer meets the win condition
+  /// (king entered + ≥ 24 points), otherwise 'draw'.
+  String adjudicateImpasse(int declarer) {
+    if (kingEntered(declarer) && impassePoints(declarer) >= 24) {
+      return declarer == sente ? 'sente' : 'gote';
+    }
+    return 'draw';
+  }
+
   // ------------------------------------------------------------- serialization
 
   Map<String, dynamic> toMap() => {
@@ -656,6 +729,42 @@ class ShogiEngine {
   }
 
   // ------------------------------------------------------------------ helpers
+
+  /// One-letter piece code for narration (promoted pieces get a '+' prefix).
+  static String pieceCode(int t) {
+    const base = {
+      ptKing: 'K',
+      ptRook: 'R',
+      ptBishop: 'B',
+      ptGold: 'G',
+      ptSilver: 'S',
+      ptKnight: 'N',
+      ptLance: 'L',
+      ptPawn: 'P',
+    };
+    final b = demoteType(t);
+    final plus = isPromotable(b) && t != b ? '+' : '';
+    return '$plus${base[b] ?? '?'}';
+  }
+
+  /// Square label in file + rank-letter form from sente's perspective,
+  /// e.g. file 2, sixth rank from sente -> "2f".
+  static String fileRankLabel(int sq) {
+    final r = sq ~/ 9, c = sq % 9;
+    final rank = String.fromCharCode(97 + (8 - r)); // a..i from sente
+    return '${9 - c}$rank';
+  }
+
+  /// Human-readable narration for a move, e.g. "P-2f", "B*5e", "+S-3c".
+  /// [movedPiece] is the piece int as it stood before the move
+  /// (mover * dropType for drops).
+  static String describeMove(ShogiMove m, int movedPiece) {
+    final sq = fileRankLabel(m.to);
+    if (m.isDrop) return '${pieceCode(pType(movedPiece))}*$sq';
+    final code = pieceCode(pType(movedPiece));
+    final promo = m.promote ? '+' : '';
+    return '$promo$code-$sq';
+  }
 
   /// File (1-9, right-to-left from sente) and rank kanji for a square.
   static String squareLabel(int sq) {

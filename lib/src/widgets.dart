@@ -446,6 +446,7 @@ class Komadai extends StatelessWidget {
   final bool interactive;
   final ValueChanged<int> onTapType;
   final PieceWood wood;
+  final String? name;
   const Komadai({
     super.key,
     required this.hand,
@@ -454,6 +455,7 @@ class Komadai extends StatelessWidget {
     required this.wood,
     this.selectedType,
     this.interactive = false,
+    this.name,
   });
 
   @override
@@ -472,9 +474,25 @@ class Komadai extends StatelessWidget {
       decoration: ShogiMaterials.lacquerPanel(radius: 10),
       child: Row(
         children: [
-          Text(
-            color == sente ? '先手' : '後手',
-            style: ShogiType.kanji(16, ShogiPalette.washi, spacing: 2),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                color == sente ? '先手' : '後手',
+                style: ShogiType.kanji(16, ShogiPalette.washi, spacing: 2),
+              ),
+              if (name != null && name!.isNotEmpty)
+                SizedBox(
+                  width: 64,
+                  child: Text(
+                    name!,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: ShogiPalette.emberGold, fontSize: 11),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(width: 8),
           if (types.isEmpty)
