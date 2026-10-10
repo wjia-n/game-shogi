@@ -90,12 +90,6 @@ class StoreService {
     }
   }
 
-  Future<void> _cachePro(bool v) async {
-    try {
-      final p = await SharedPreferences.getInstance();
-      await p.setBool('shogi_proUnlocked', v);
-    } catch (_) {}
-  }
 
   void _onPurchases(List<PurchaseDetails> list) {
     for (final p in list) {
