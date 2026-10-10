@@ -17,10 +17,9 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class StoreService {
-  static const proId = 'shogipro';
   static const coffeeId = 'shogicoffee';
   static const chocolateId = 'shogichocolate';
-  static const productIds = {proId, coffeeId, chocolateId};
+  static const productIds = {coffeeId, chocolateId};
 
   static final StoreService I = StoreService._();
   StoreService._();
@@ -36,11 +35,11 @@ class StoreService {
 
   /// Callbacks the UI wires up.
   final ValueNotifier<String?> lastThanks = ValueNotifier(null);
-  final ValueNotifier<bool> proPurchased = ValueNotifier(false);
+  final ValueNotifier<bool> proPurchased = ValueNotifier(true); // everything unlocked
   final ValueNotifier<String?> purchaseError = ValueNotifier(null);
   final ValueNotifier<bool> purchaseInProgress = ValueNotifier(false);
 
-  ProductDetails? get proProduct => _byId(proId);
+  ProductDetails? get proProduct => null; // Pro removed — everything is free
   ProductDetails? get coffeeProduct => _byId(coffeeId);
   ProductDetails? get chocolateProduct => _byId(chocolateId);
 
@@ -102,11 +101,7 @@ class StoreService {
     for (final p in list) {
       if (p.status == PurchaseStatus.purchased ||
           p.status == PurchaseStatus.restored) {
-        if (p.productID == proId) {
-          proPurchased.value = true;
-          unawaited(_cachePro(true));
-          lastThanks.value = 'Welcome to Shogi PRO!';
-        } else if (p.productID == chocolateId) {
+        if (p.productID == chocolateId) {
           lastThanks.value = 'Thank you for the chocolate!';
         } else if (p.productID == coffeeId) {
           lastThanks.value = 'Thank you for the coffee!';
@@ -129,17 +124,7 @@ class StoreService {
   }
 
   Future<void> buyPro() async {
-    final p = proProduct;
-    if (p == null) return;
-    purchaseError.value = null;
-    purchaseInProgress.value = true;
-    try {
-      await _iap.buyNonConsumable(
-          purchaseParam: PurchaseParam(productDetails: p));
-    } catch (_) {
-      purchaseInProgress.value = false;
-      purchaseError.value = 'Purchase failed — please try again.';
-    }
+    // Pro removed — everything is free and unlocked.
   }
 
   Future<void> buyTip(ProductDetails product) async {
